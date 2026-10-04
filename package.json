@@ -1,0 +1,89 @@
+{
+  "name": "@unilarva/translator",
+  "version": "0.3.0",
+  "type": "module",
+  "description": "Zero-dependency TypeScript i18n for browsers and servers: runtime catalogs, interpolation, Intl formatting, semantic rich text, and optional DOM bindings.",
+  "keywords": [
+    "i18n",
+    "internationalization",
+    "localization",
+    "translation",
+    "multilingual",
+    "interpolation",
+    "translator",
+    "typescript",
+    "esm",
+    "framework-independent",
+    "zero-dependency",
+    "dom",
+    "language-switcher",
+    "bcp-47",
+    "intl",
+    "rich-text",
+    "ssr"
+  ],
+  "author": {
+    "name": "Lari Natri",
+    "email": "lari.natri@iki.fi"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unilarva/translator.git"
+  },
+  "homepage": "https://github.com/unilarva/translator#readme",
+  "bugs": {
+    "url": "https://github.com/unilarva/translator/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "USAGE.md",
+    "ARCHITECTURE.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "assets/icons/unilarva-translator-logo-adaptive.svg"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./dom": {
+      "types": "./dist/dom.d.ts",
+      "import": "./dist/dom.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "test": "node --test --import tsx tests/**/*.test.ts",
+    "test:dist": "node ./scripts/test-dist.mjs",
+    "typecheck:src": "tsc -p tsconfig.build.json --noEmit",
+    "typecheck:test": "tsc -p tsconfig.test.json",
+    "typecheck": "npm run typecheck:src && npm run typecheck:test",
+    "validate": "npm run format:check && npm run typecheck && npm test && npm run build && npm run test:dist",
+    "prepack": "npm run validate",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@types/node": "22.13.17",
+    "happy-dom": "^20.14.5",
+    "prettier": "^3.9.6",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2"
+  }
+}

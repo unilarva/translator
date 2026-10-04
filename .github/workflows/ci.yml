@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.13.0, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - run: npm install --global npm@11.15.0 --ignore-scripts
+      - run: npm ci
+      - run: npm run validate
+
+  exact-pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm install --global npm@11.15.0 --ignore-scripts
+      - run: npm ci
+      - name: Validate and retain candidate
+        run: |
+          mkdir "$RUNNER_TEMP/candidate"
+          npm pack --workspaces=false --pack-destination "$RUNNER_TEMP/candidate"
+          cd "$RUNNER_TEMP/candidate"
+          set -- *.tgz
+          test "$#" -eq 1 && test -f "$1"
+          sha256sum "$1" > "$1.sha256"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: exact-pack-candidate
+          path: |
+            ${{ runner.temp }}/candidate/*.tgz
+            ${{ runner.temp }}/candidate/*.sha256
+          if-no-files-found: error
+          retention-days: 14

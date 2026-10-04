@@ -1,0 +1,97 @@
+stages:
+  - validate
+  - package
+  - publish
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+default:
+  image: node:24-bookworm
+  before_script:
+    - npm install --global npm@11.15.0 --ignore-scripts
+    - npm ci
+
+variables:
+  # GitHub publishes by default. Override only after configuring GitLab npm trust.
+  TRANSLATOR_PUBLISH_PROVIDER: github
+
+validate:
+  stage: validate
+  image: node:${NODE_VERSION}-bookworm
+  parallel:
+    matrix:
+      - NODE_VERSION: ["22.13.0", "24"]
+  script:
+    - npm run validate
+
+candidate:
+  stage: package
+  script:
+    - |
+      set -eu
+      test "$(node -p 'require("./package.json").name')" = '@unilarva/translator'
+      case "${CI_COMMIT_TAG:-}" in
+        v*) test "$CI_COMMIT_TAG" = "v$(node -p 'require("./package.json").version')" ;;
+      esac
+      mkdir candidate
+      npm pack --workspaces=false --pack-destination "$CI_PROJECT_DIR/candidate"
+      cd candidate
+      set -- *.tgz
+      test "$#" -eq 1 && test -f "$1"
+      sha256sum "$1" > "$1.sha256"
+  artifacts:
+    paths:
+      - candidate/*.tgz
+      - candidate/*.sha256
+    expire_in: 14 days
+
+publish:
+  stage: publish
+  # npm OIDC supports GitLab.com hosted runners, not self-hosted GitLab/runners.
+  tags:
+    - saas-linux-small-amd64
+  before_script:
+    - npm install --global npm@11.15.0 --ignore-scripts
+  cache: []
+  variables:
+    GIT_STRATEGY: empty
+  needs:
+    - job: candidate
+      artifacts: true
+  resource_group: npm
+  environment:
+    name: npm
+    url: https://www.npmjs.com/package/@unilarva/translator
+  id_tokens:
+    NPM_ID_TOKEN:
+      aud: npm:registry.npmjs.org
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/ && $CI_COMMIT_REF_PROTECTED == "true" && $TRANSLATOR_PUBLISH_PROVIDER == "gitlab"
+      when: manual
+      allow_failure: false
+  script:
+    - |
+      set -eu
+      node -e 'const [a,b]=require("child_process").execSync("npm --version").toString().trim().split(".").map(Number); if(a<11 || (a===11 && b<15)) throw new Error("Publishing requires npm >=11.15.0")'
+      cd "$CI_PROJECT_DIR/candidate"
+      set -- *.tgz
+      test "$#" -eq 1 && test -f "$1"
+      tarball="$1"
+      set -- *.sha256
+      test "$#" -eq 1 && test "$1" = "$tarball.sha256"
+      sha256sum --check "$1"
+      export RELEASE_TAG="$CI_COMMIT_TAG"
+      tar -xOf "$tarball" package/package.json | node -e 'const p=JSON.parse(require("fs").readFileSync(0,"utf8")); require("assert/strict").equal(p.name,"@unilarva/translator"); require("assert/strict").equal("v"+p.version,process.env.RELEASE_TAG)'
+      case "$CI_COMMIT_TAG" in
+        *-*) dist_tag=next ;;
+        *) dist_tag=latest ;;
+      esac
+      npm publish "$tarball" --access public --provenance --tag "$dist_tag" --registry=https://registry.npmjs.org/

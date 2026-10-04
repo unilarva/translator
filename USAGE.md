@@ -394,6 +394,20 @@ translator.translateKey("greeting", {
 });
 ```
 
+Translation strings are plain text: HTML entities such as `&amp;`, `&nbsp;`, and `&shy;`
+are not decoded and appear verbatim in the built-in DOM binding. Use the Unicode characters
+themselves, or Unicode escapes in JavaScript/TypeScript or JSON source. For example, the soft hyphen
+(`&shy;` in HTML) is `\u00AD` and allows an optional word break, displaying a hyphen when that break
+is used:
+
+```ts
+const label = "inter\u00ADnational";
+```
+
+The source parser converts `\u00AD` into the character before the translator receives the string;
+the translator does not decode literal backslash escapes. Soft hyphens are useful for wrapping long
+words in narrow UI labels without a permanently visible hyphen.
+
 Lookup-time interpolation uses `{name}` placeholders and the `values` supplied to that individual
 `translateKey()` call. Values are stringified and remain ordinary text; they are never parsed as
 HTML. A placeholder without a matching own property remains unchanged, while a nullish supplied

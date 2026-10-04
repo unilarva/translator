@@ -818,10 +818,24 @@ option receives the canonical code as its value and `lang` attribute. Consumer c
 surrounding label, styles, persistence, browser-language detection, URLs, and which entries it adds
 to the registry.
 
+For uppercase UI codes such as `EN`, `FI`, and `SV`, opt in with a formatter:
+
+```ts
+const selectBinding = bindLanguageSelect(translator, select, {
+  label: language => language.code.toUpperCase(),
+});
+```
+
+`"code"` alone preserves canonical casing. The formatter changes display text only, not option
+values or `lang` attributes, and also applies to unregistered active languages.
+
 The binding calls `setLanguage()` for non-empty user selections and updates the selection after
-external language changes. If the active language is not registered, it does not invent an option;
-the native select has no selected registry option. Setting a select value programmatically does not
-change the translator until a `change` event is dispatched.
+external language changes. With population enabled, an unregistered active language gets a selected
+temporary option appended after the registry options. Its label uses the same strategy with only
+`{ code }` metadata: native-name labels fall back to the code, while custom formatters still run.
+The temporary option is removed when the active language changes and replaced with a registry option
+if that language is registered; no registry entry is created by the binding. Setting a select value
+programmatically does not change the translator until a `change` event is dispatched.
 
 For consumer-owned options, disable population:
 
@@ -833,6 +847,7 @@ In this mode the binding never adds, removes, or relabels options. It only synch
 option and forwards valid non-empty changes. Option values may contain canonicalizable language tags,
 such as `EN_us`; comparison uses canonical tags without rewriting the values. Invalid tags are ignored.
 If several option values normalize to the same language, the first matching option is selected.
+If no option matches the active language, the selection is cleared (`selectedIndex` is `-1`).
 `update()` performs an explicit synchronization in either mode. `dispose()` removes both translator
 subscriptions and the DOM listener without altering the select.
 
@@ -877,8 +892,21 @@ generated choice instead. A formatter callback can implement application rules f
 entries.
 
 The current summary label also uses the native name by default. Set `currentLabel: "code"` or supply
-a formatter to change it. An unregistered active language always displays its code. The active choice
-remains clickable and carries `aria-current="true"` so consumer CSS can distinguish it; set
+a formatter to change it. For an unregistered active language, the same strategy receives only
+`{ code }`, with optional metadata absent: native-name labels fall back to the code, while custom
+formatters still run. To display uppercase codes in both the generated choices and current summary,
+configure both formatters:
+
+```ts
+const detailsBinding = bindLanguageDetails(translator, languageDetails, {
+  choiceLabel: language => language.code.toUpperCase(),
+  currentLabel: language => language.code.toUpperCase(),
+});
+```
+
+As with the select, uppercasing is opt-in and changes display text only, not canonical language codes
+or `lang` attributes. The active choice remains clickable and carries
+`aria-current="true"` so consumer CSS can distinguish it; set
 `hideCurrent: true` only when the current choice should be omitted.
 
 Activating an accepted choice prevents the button's default action (including form submission),

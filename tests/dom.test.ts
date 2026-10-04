@@ -823,13 +823,120 @@ test("binds a native select to active language and live registry changes", () =>
 
   translator.removeLanguage("fi");
   assert.equal(translator.getLanguage(), "fi");
-  assert.equal(select.selectedIndex, -1);
+  assert.equal(select.value, "fi");
+  assert.equal(select.selectedOptions[0]!.textContent, "fi");
   binding.dispose();
   translator.addLanguage({ code: "sv", nativeName: "Svenska" });
   assert.deepEqual(
     [...select.options].map(option => option.value),
+    ["en", "pt-BR", "fi"],
+  );
+});
+
+test("formats temporary select options across active-language and registry changes", () => {
+  const { window, translator } = createFixture();
+  translator.setLanguage("pt_BR");
+  const select = window.document.createElement("select");
+  const labels: { code: string; nativeName?: string }[] = [];
+  const binding = bindLanguageSelect(translator, select as unknown as HTMLSelectElement, {
+    label: language => {
+      labels.push({ ...language });
+      return language.code.toUpperCase();
+    },
+  });
+  assert.deepEqual(labels.at(-1), { code: "pt-BR" });
+  assert.equal(select.value, "pt-BR");
+  assert.equal(select.selectedOptions[0]!.textContent, "PT-BR");
+  assert.equal(select.selectedOptions[0]!.lang, "pt-BR");
+  assert.equal(
+    translator.getLanguages().some(language => language.code === "pt-BR"),
+    false,
+  );
+  const registeredOption = select.options[0];
+
+  translator.setLanguage("sv");
+  assert.deepEqual(
+    [...select.options].map(option => option.value),
+    ["en", "sv"],
+  );
+  assert.equal(select.options[0], registeredOption);
+  assert.equal(select.value, "sv");
+  assert.equal(select.selectedOptions[0]!.textContent, "SV");
+  assert.deepEqual(labels.at(-1), { code: "sv" });
+
+  translator.setLanguage("en");
+  assert.equal(select.options.length, 1);
+  assert.equal(select.value, "en");
+  assert.equal(select.selectedOptions[0]!.textContent, "EN");
+  translator.setLanguage("pt-BR");
+  translator.addLanguage({ code: "pt-BR", nativeName: "Portuguese" });
+  assert.equal(labels.at(-1)!.nativeName, "Portuguese");
+  assert.deepEqual(
+    [...select.options].map(option => option.value),
     ["en", "pt-BR"],
   );
+  assert.equal(select.value, "pt-BR");
+  translator.removeLanguage("pt-BR");
+  assert.deepEqual(labels.at(-1), { code: "pt-BR" });
+  binding.update();
+  assert.deepEqual(
+    [...select.options].map(option => option.value),
+    ["en", "pt-BR"],
+  );
+  assert.equal(select.selectedOptions[0]!.textContent, "PT-BR");
+  binding.dispose();
+  translator.setLanguage("en");
+  assert.equal(select.value, "pt-BR");
+});
+
+test("built-in select labels fall back to canonical codes for temporary options", () => {
+  for (const label of [undefined, "native", "code"] as const) {
+    const { window, translator } = createFixture();
+    translator.setLanguage("pt-BR");
+    const select = window.document.createElement("select");
+    const binding = bindLanguageSelect(translator, select as unknown as HTMLSelectElement, {
+      label,
+    });
+    assert.equal(select.value, "pt-BR");
+    assert.equal(select.selectedOptions[0]!.textContent, "pt-BR");
+    translator.addLanguage({ code: "pt-BR", nativeName: "Portuguese" });
+    assert.equal(select.selectedOptions[0]!.textContent, label === "code" ? "pt-BR" : "Portuguese");
+    translator.removeLanguage("pt-BR");
+    assert.equal(select.value, "pt-BR");
+    assert.equal(select.selectedOptions[0]!.textContent, "pt-BR");
+    binding.dispose();
+  }
+});
+
+test("rolls back both language controls when an unregistered active label formatter fails", () => {
+  for (const control of ["select", "details"] as const) {
+    const { window, translator } = createFixture();
+    translator.setLanguage("pt-BR");
+    const subscriptions = trackSubscriptions(translator);
+    const element = window.document.createElement(control);
+    if (control === "details") {
+      element.innerHTML =
+        "<summary><span data-i18n-language-current></span></summary><div data-i18n-language-options></div>";
+    }
+    const label = (language: { code: string }): string => {
+      if (language.code === "pt-BR") throw new Error("unregistered label failed");
+      return language.code;
+    };
+    assert.throws(
+      () =>
+        control === "select"
+          ? bindLanguageSelect(translator, element as unknown as HTMLSelectElement, { label })
+          : bindLanguageDetails(translator, element as unknown as HTMLDetailsElement, {
+              currentLabel: label,
+            }),
+      /unregistered label failed/,
+    );
+    assert.equal(subscriptions(), 0);
+    const markup = element.innerHTML;
+    translator.setLanguage("en");
+    translator.addLanguage({ code: "sv" });
+    assert.equal(element.innerHTML, markup);
+  }
 });
 
 test("supports consumer-owned select options when population is disabled", () => {
@@ -1012,6 +1119,71 @@ test("binds a populated details dropdown and synchronizes multiple language cont
   translator.setLanguage("en");
   assert.equal(current.textContent, "Português");
   assert.equal(select.value, "en");
+});
+
+test("formats registered and unregistered details summaries across language and registry changes", () => {
+  const { window, translator } = createFixture();
+  translator.setLanguage("pt_BR");
+  const details = window.document.createElement("details");
+  details.innerHTML =
+    "<summary><span data-i18n-language-current></span></summary><div data-i18n-language-options></div>";
+  const current = details.querySelector("span")!;
+  const labels: { code: string; nativeName?: string }[] = [];
+  const binding = bindLanguageDetails(translator, details as unknown as HTMLDetailsElement, {
+    choiceLabel: language => language.code.toUpperCase(),
+    currentLabel: language => {
+      labels.push({ ...language });
+      return language.code.toUpperCase();
+    },
+  });
+  assert.deepEqual(labels.at(-1), { code: "pt-BR" });
+  assert.equal(current.textContent, "PT-BR");
+  assert.equal(current.lang, "pt-BR");
+  assert.equal(translator.getLanguage(), "pt-BR");
+  assert.equal(
+    translator.getLanguages().some(language => language.code === "pt-BR"),
+    false,
+  );
+
+  translator.setLanguage("en");
+  assert.equal(current.textContent, "EN");
+  assert.equal(labels.at(-1)!.nativeName, "English");
+  assert.equal(details.querySelector('[data-i18n-language="en"]')!.textContent, "EN");
+  translator.setLanguage("pt-BR");
+  assert.equal(current.textContent, "PT-BR");
+  assert.deepEqual(labels.at(-1), { code: "pt-BR" });
+
+  translator.addLanguage({ code: "pt-BR", nativeName: "Portuguese" });
+  assert.equal(labels.at(-1)!.nativeName, "Portuguese");
+  assert.equal(current.textContent, "PT-BR");
+  assert.equal(details.querySelector('[data-i18n-language="pt-BR"]')!.textContent, "PT-BR");
+  translator.removeLanguage("pt-BR");
+  assert.deepEqual(labels.at(-1), { code: "pt-BR" });
+  assert.equal(current.textContent, "PT-BR");
+  binding.update();
+  assert.deepEqual(labels.at(-1), { code: "pt-BR" });
+  binding.dispose();
+});
+
+test("built-in details summary labels retain code fallback for unregistered languages", () => {
+  for (const currentLabel of [undefined, "native", "code"] as const) {
+    const { window, translator } = createFixture();
+    translator.setLanguage("pt-BR");
+    const details = window.document.createElement("details");
+    details.innerHTML =
+      "<summary><span data-i18n-language-current></span></summary><div data-i18n-language-options></div>";
+    const current = details.querySelector("span")!;
+    const binding = bindLanguageDetails(translator, details as unknown as HTMLDetailsElement, {
+      currentLabel,
+    });
+    assert.equal(current.textContent, "pt-BR");
+    assert.equal(current.lang, "pt-BR");
+    translator.addLanguage({ code: "pt-BR", nativeName: "Portuguese" });
+    assert.equal(current.textContent, currentLabel === "code" ? "pt-BR" : "Portuguese");
+    translator.removeLanguage("pt-BR");
+    assert.equal(current.textContent, "pt-BR");
+    binding.dispose();
+  }
 });
 
 test("supports consumer-owned details choices and validates required structure", () => {

@@ -347,6 +347,13 @@ registry change. Neither helper creates its outer control, chooses supported lan
 browser preferences, persists a choice, or invents a registry entry for an unregistered active
 language.
 
+Generated selects track one temporary option for an unregistered active language, append it after
+registry options, and remove it on active-language changes or replace it during registry rebuilds.
+It is presentation-only, not a registry entry. Both this option and the details summary use the
+configured label strategy with `{ code }` metadata when the active language is unregistered.
+Consumer-owned select options are never added, removed, or relabeled; unmatched languages clear
+their selection.
+
 Details markers use the same validated `attributePrefix` convention as ordinary DOM translation
 markers, producing `data-PREFIX-language-current`, `data-PREFIX-language-options`, and
 `data-PREFIX-language` rather than a separate fixed namespace.

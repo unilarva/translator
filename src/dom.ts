@@ -172,7 +172,8 @@ export interface TranslatorLanguageSelectOptions {
   logger?: TranslatorLogger;
   /**
    * Replace all select children with registry options initially and on registry/manual
-   * refreshes. Defaults to true; false preserves consumer-owned options and their labels.
+   * refreshes, with a temporary option for an unregistered active language. Defaults
+   * to true; false preserves consumer-owned options and their labels.
    */
   populate?: boolean;
   /** Generated option label form or formatter. Defaults to native name, then code. */
@@ -181,8 +182,9 @@ export interface TranslatorLanguageSelectOptions {
 
 /**
  * Label strategy: `native` uses a non-empty native name or the code; `code` uses the
- * canonical code. A synchronous formatter receives read-only registry metadata and
- * returns plain text, never HTML. Formatter errors propagate from explicit updates
+ * canonical code. A synchronous formatter receives read-only registry metadata, or
+ * only `{ code }` for an unregistered active language, and returns plain text,
+ * never HTML. Formatter errors propagate from explicit updates
  * and binding creation; translator notifications isolate subscriber failures.
  *
  * @param language - Detached, read-only metadata for the language being labeled.
@@ -195,7 +197,8 @@ export type TranslatorLanguageLabel =
 export interface TranslatorLanguageSelectBinding {
   /**
    * Rebuilds options when population is enabled and selects the first normalized tag
-   * matching the active language. Sets selectedIndex to -1 if none matches.
+   * matching the active language, adding a temporary active option if unregistered.
+   * With population disabled, sets selectedIndex to -1 if none matches.
    * No-op after disposal; consumer DOM edits require an explicit refresh.
    *
    * @returns Nothing.
@@ -229,7 +232,7 @@ export interface TranslatorLanguageDetailsOptions {
   choiceClass?: string;
   /** Generated choice label form or formatter. Defaults to native name, then code. */
   choiceLabel?: TranslatorLanguageLabel;
-  /** Summary label form or formatter. Defaults to native name, then code. */
+  /** Summary label form or formatter, including unregistered languages. Defaults to native name, then code. */
   currentLabel?: TranslatorLanguageLabel;
   /**
    * Hide the active choice via `hidden`. Defaults to false, which unhides valid choices.
@@ -656,6 +659,8 @@ export function bindTranslator(
 /**
  * Binds a native single-select control to active-language and registry changes.
  * Populates registry options by default and synchronizes selection immediately.
+ * With population enabled, an unregistered active language gets a temporary option
+ * formatted with only `{ code }` metadata; it does not create a registry entry.
  * Change events normalize non-empty option values and activate valid tags, even
  * when not registered. Invalid tags are logged and ignored; the control is not disabled.
  *
@@ -685,15 +690,30 @@ export function bindLanguageSelect(
   }
   const populate = options.populate ?? true;
   let disposed = false;
+  let temporaryOption: HTMLOptionElement | null = null;
 
-  /** Selects the first canonically matching option, clearing selection when none matches. */
+  /** Reconciles the temporary active option and selects the first canonical match. */
   const updateSelection = (): void => {
     if (disposed) return;
     const active = translator.getLanguage();
-    select.selectedIndex = [...select.options].findIndex(
+    if (temporaryOption && temporaryOption.value !== active) {
+      temporaryOption.remove();
+      temporaryOption = null;
+    }
+    let selectedIndex = [...select.options].findIndex(
       option =>
         option.value.trim() !== "" && normalizeChoiceLanguage(option.value, logger) === active,
     );
+    if (selectedIndex === -1 && populate) {
+      const option = select.ownerDocument.createElement("option");
+      option.value = active;
+      option.textContent = languageLabel({ code: active }, options.label);
+      option.lang = active;
+      select.append(option);
+      temporaryOption = option;
+      selectedIndex = option.index;
+    }
+    select.selectedIndex = selectedIndex;
   };
 
   /** Replaces owned options with plain-text registry entries in registration order. */
@@ -708,6 +728,7 @@ export function bindLanguageSelect(
       fragment.append(option);
     }
     select.replaceChildren(fragment);
+    temporaryOption = null;
   };
 
   /** Rebuilds owned options and reconciles active selection while live. */
@@ -775,7 +796,7 @@ function createLanguageAttributeNames(prefix: string): {
   };
 }
 
-/** Resolves a plain-text registry label, allowing synchronous consumer formatting. */
+/** Resolves a plain-text language label, allowing synchronous consumer formatting. */
 function languageLabel(
   language: Readonly<LanguageInfo>,
   format: TranslatorLanguageLabel = "native",
@@ -800,7 +821,8 @@ function languageLabel(
  * `type="button"` to avoid form submission before binding or after disposal.
  * Active language changes update labels and choice state without rebuilding; registry/manual
  * updates may rebuild. DOM mutations are not observed.
- * The active summary falls back to its code when no registry entry exists.
+ * An unregistered active summary uses the same label strategy with only `{ code }`
+ * metadata, falling back to its code unless a custom formatter is supplied.
  *
  * @param translator - Translator supplying language state and registry metadata.
  * @param details - Native HTML details element, including one from another window.
@@ -910,8 +932,10 @@ export function bindLanguageDetails(
   const updateSelection = (): void => {
     if (disposed) return;
     const active = translator.getLanguage();
-    const info = translator.getLanguages().find(language => language.code === active);
-    current.textContent = info ? languageLabel(info, options.currentLabel) : active;
+    const info = translator.getLanguages().find(language => language.code === active) ?? {
+      code: active,
+    };
+    current.textContent = languageLabel(info, options.currentLabel);
     current.lang = active;
     choices.querySelectorAll<HTMLElement>(names.choiceSelector).forEach(choice => {
       const language = choiceLanguage(choice);

@@ -935,8 +935,8 @@ respectively, then rethrow that same error. Standalone helpers throw without tra
 Locale support and exact results depend on the host's `Intl` implementation and locale data, not on
 the translation catalog or its fallback policy. Each formatter family uses a bounded cache under
 the existing shared cache policy; object-valued option coercions bypass caching so their observable
-behavior is preserved. The new helpers also bypass caching for accessor properties and custom option
-prototypes, preserving native reads of inherited and non-enumerable options without invoking unknown
+behavior is preserved. Relative-time and plural helpers also bypass caching for accessor properties
+and custom option prototypes, preserving native reads of inherited and non-enumerable options without invoking unknown
 option getters. These helpers remain DOM-free and add no runtime dependencies or DOM markers.
 
 ## Logging

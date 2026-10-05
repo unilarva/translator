@@ -39,10 +39,10 @@ This document is for package maintainers. Consumer setup and behavior belong in
 - [Adding Or Changing Features](#adding-or-changing-features)
 - [Future Enhancements](#future-enhancements)
   - [Inserted Markup Observation](#inserted-markup-observation)
-  - [Plural, Select, And Compiled Messages](#plural-select-and-compiled-messages)
-  - [Catalog Generation And Extraction](#catalog-generation-and-extraction)
   - [Intl Formatting Parts And Ranges](#intl-formatting-parts-and-ranges)
+  - [Catalog Generation And Extraction](#catalog-generation-and-extraction)
   - [Framework Adapters](#framework-adapters)
+  - [Plural, Select, And Compiled Messages](#plural-select-and-compiled-messages)
   - [Rich Grammar And Asynchronous Rendering](#rich-grammar-and-asynchronous-rendering)
 - [Distribution And Release](#distribution-and-release)
   - [CI And Trusted Publishing](#ci-and-trusted-publishing)
@@ -142,7 +142,8 @@ and digit/rounding effects on categories. Return `Intl.LDMLPluralRule` labels ra
 
 Keep a separate bounded cache for each Intl family using the existing shared cache policy and
 canonical locale/effective primitive option keys. Object-valued option coercions bypass caching;
-the new helpers inspect data-property descriptors for cache keys and pass original options to Intl.
+the relative-time and plural helpers inspect data-property descriptors for cache keys and pass original
+options to Intl.
 Accessors and custom prototypes bypass caching to retain native option reads without invoking unknown
 getters. Cache reuse must not hide observable coercion. Host locale negotiation and data determine support,
 not catalog fallback. Do not add automatic unit selection, date differences, clocks, timers, plural
@@ -540,56 +541,67 @@ updates.
 
 ## Future Enhancements
 
-These are candidate directions, not release commitments. The package is already published, with
-`0.3.0` as its first public release. Keep subsequent work focused rather than adding speculative
-framework or plugin machinery. Prefer additive, opt-in APIs that preserve the existing grammar,
-events, ownership, and rendering guarantees instead of silently repurposing them.
-This section lists unimplemented work only; existing capabilities belong in Source Modules and
-Core Data Flows above, with their consumer contracts in `USAGE.md`.
+These are unimplemented candidates, not release commitments. Prefer additive, opt-in APIs that leave
+existing consumers unchanged. Gate tooling, adapters, and compiled messages on a
+concrete consumer need rather than adding speculative infrastructure.
+
+| Candidate                                  | Importance                                | Complexity  |
+| ------------------------------------------ | ----------------------------------------- | ----------- |
+| Inserted markup observation                | Medium; high for dynamic imperative DOM   | Medium-high |
+| Intl parts and ranges                      | Medium; low-risk native extension         | Low-medium  |
+| JSON-to-key declaration generator          | Medium for TypeScript workflows           | Medium      |
+| Stable snapshots and one framework adapter | High when an integration needs it         | Medium-high |
+| Thin compiled-message integration          | High i18n value; format decision required | High        |
+| Rich grammar and asynchronous rendering    | Use-case dependent                        | High        |
 
 ### Inserted Markup Observation
 
-An optional DOM mutation observer could handle inserted markup independently of language and catalog
-changes; explicit updates should remain available and disposal must release the observer.
-Do not conflate markup observation with
-catalog changes or lookup-policy changes.
-
-### Plural, Select, And Compiled Messages
-
-Plural/select messages or ICU integration should use an explicit message API or separately identified
-compiled-message format, not reinterpret ordinary `{name}`
-strings. Message compilation is separate from native plural-category selection.
-Replacing the default interpolation grammar would be a documented compatibility change;
-the preferred approach is additive and opt-in. Keep compilation or dependency-heavy integrations
-outside the zero-runtime-dependency core.
-
-### Catalog Generation And Extraction
-
-Separate tooling could generate key declarations or extract catalogs from application sources.
-Preserve the dynamic string-key API and runtime validation for downloaded or parsed data even when
-authoring tools produce statically checked bundles;
-do not expand the wrapper into a generic translator or a catalog build pipeline.
+Start with a disabled-by-default observer for inserted element subtrees, not marker edits or general
+selector dependency tracking. Batch nested additions, ignore removed nodes, use the owning realm,
+and retain template/shadow-root boundaries. Suppress rendering feedback loops, diagnose observer-scan
+failures, and disconnect on disposal or failed initialization. Renderer-created markup during
+suppression still needs explicit updates. Verify scheduling and feedback prevention in real browsers;
+do not conflate insertion observation with catalog or lookup-policy changes.
 
 ### Intl Formatting Parts And Ranges
 
-Formatting parts and ranges could be added as named helpers and Translator methods without
-changing existing signatures. Retain the distinction between calendar values, clock values, and
-Date instants, and keep locale-data dependence and formatter-cache behavior explicit.
+Add named helpers and matching Translator methods without changing existing signatures. Specify parts
+return types and native range/runtime availability. Preserve calendar/clock/instant distinctions,
+locale-data dependence, and bounded-cache/coercion behavior; clock results must never expose their
+synthetic date or zone. Add DOM markers only when a consumer needs them.
+
+### Catalog Generation And Extraction
+
+Begin, if needed, with deterministic key-declaration generation from JSON bundles in separate tooling.
+Preserve dynamic string keys and runtime validation; generated vocabulary does not prove downloaded
+catalog validity or locale coverage. Source extraction is a different project: choose source languages,
+AST tooling, and dynamic-key policy first. Its scope and complexity depend on those requirements.
 
 ### Framework Adapters
 
-Framework integration may need a versioned, referentially stable snapshot API for external-store
-subscriptions. Add that API when an adapter needs it; do not silently change the detached snapshot
-ownership of `getTranslationData()` or `getLanguages()`. Keep framework-specific lifecycle and
-dependencies in adapters rather than the core or ordinary DOM binding.
+Select one framework and SSR use case before execution. Add a lightweight stable snapshot and a new
+subscription covering locale, catalog, registry, and lookup-policy revisions; do not clone catalogs
+on every read or change existing getter ownership/event semantics. Define no-op identity, reentrancy,
+and coherent transaction notifications, then build a separate adapter. Keep framework dependencies
+outside core and translators request-owned during SSR; test hydration and disposal explicitly.
+
+### Plural, Select, And Compiled Messages
+
+Choose a concrete message format/compiler before adding a separate opt-in API or compiled catalog.
+Preserve ordinary `{name}` interpolation and string bundle values; compiled callbacks are trusted
+consumer code, not JSON. Plural rules must use the resolved message's locale, including fallback,
+not blindly the active locale. Define escaping, nested branches, missing variables, and failure
+isolation. Keep compilation dependencies outside core. Prefer a thin external-compiler integration;
+a bespoke nested parser/compiler brings substantially greater security and maintenance cost.
 
 ### Rich Grammar And Asynchronous Rendering
 
 Broader token grammar or asynchronous rendering should use separate opt-in APIs. Keep ordinary rich
 tokens attribute-free, URLs consumer-owned, and current extension callbacks synchronous and
 unawaited. An asynchronous API would need explicit ordering, cancellation, stale-result, and disposal
-semantics. Replacing the current grammar, node variants, or callback contract could break consumers
-and would require a documented compatibility change; it is not necessary for the additive roadmap.
+semantics. Define the scope from a concrete use case. Replacing the current grammar,
+node variants, or callback contract would require a documented compatibility change; do not bundle
+this work into message compilation or insertion observation.
 
 ## Distribution And Release
 
@@ -632,9 +644,8 @@ Keep the npm pin aligned across both GitHub workflows, GitLab's default and isol
 and this development guide. Release tests assert job coverage and ordering. When updating it, verify
 the npm release's Node engine range against both tested runtimes and run the complete package gate.
 
-The package is already published, so the initial publication bootstrap is no longer a release step.
-Subsequent releases should use the selected CI provider configured as the package's npm trusted
-publisher, publishing the qualified candidate with provenance; do not repeat bootstrap publication.
+Use the selected CI provider configured as the package's npm trusted publisher to publish the
+qualified candidate with provenance.
 Keep account credentials and infrastructure setup out of published guides.
 
 Release checklist:

@@ -9,7 +9,8 @@
 </p>
 
 A small, framework-independent translation store with predictable runtime catalog updates,
-locale formatting, semantic rich text, and an optional text-first DOM binding.
+optional typed keys, ordered language fallbacks, locale formatting, semantic rich text,
+and an optional text-first DOM binding.
 
 The package has no runtime dependencies. Its root entry works without a DOM in browsers,
 servers, workers, and command-line tools; browser integration is isolated in

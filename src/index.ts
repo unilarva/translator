@@ -14,7 +14,15 @@
  */
 
 export { normalizeLanguageTag, Translator } from "./translator.js";
-export { formatCurrency, formatDate, formatNumber, formatTime, formatWeekday } from "./intl.js";
+export {
+  formatCurrency,
+  formatDate,
+  formatNumber,
+  formatRelativeTime,
+  formatTime,
+  formatWeekday,
+  selectPlural,
+} from "./intl.js";
 export { parseRichText, translateRichText } from "./rich-text.js";
 export type {
   CalendarDate,
@@ -23,6 +31,8 @@ export type {
   DateFormatOptions,
   LocaleFormatOptions,
   NumberFormatOptions,
+  PluralSelectOptions,
+  RelativeTimeFormatOptions,
   TimeFormatOptions,
   WeekdayFormatOptions,
 } from "./intl.js";

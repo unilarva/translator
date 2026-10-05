@@ -36,8 +36,8 @@ servers, workers, and command-line tools; browser integration is isolated in
   consumer renderers create every resulting element and own its attributes and URLs. The same
   semantic node representation is available to application-owned SSR serializers.
 - **Locale-aware and deterministic.** Canonical BCP 47 language tags, progressive subtag fallback,
-  configurable missing-value behavior, and strict `Intl` helpers keep lookup and formatting rules
-  explicit.
+  configurable missing-value behavior, and strict `Intl` helpers for formatting, relative time,
+  and plural-category selection keep lookup and formatting rules explicit.
 - **Scoped UIs and synchronized language controls.** Bind a document or subtree, use independent
   translators for previews, and connect existing native selects or details dropdowns to an observable
   language registry. Direction synchronization is opt-in; styling and persistence stay application-owned.
@@ -209,8 +209,11 @@ runtime, and prefer to keep rendering and URL policy under application control. 
 suited to shared browser/server translation code and framework-free or custom-UI applications.
 
 It does not provide ICU MessageFormat, catalog extraction or compilation, generated key types,
-plural rules beyond what consumers build into their keys and messages, or framework-specific
-components. Applications that need those workflows should use a package designed around them.
+plural message compilation, or framework-specific components. `selectPlural()` returns a native
+`Intl` category, not a translated phrase; applications own message selection. Relative-time formatting
+requires an explicit value and unit, not dates or automatic clock updates. See
+[locale formatting](./USAGE.md#locale-formatting) for both helpers and their contracts.
+Applications that need compilation or framework workflows should use a package designed around them.
 
 ## Security Boundary
 

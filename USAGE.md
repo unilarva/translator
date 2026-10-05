@@ -20,6 +20,7 @@ updates. Package internals and contributor workflows are documented in
   - [Browser Language Example](#browser-language-example)
 - [Loading Files](#loading-files)
 - [Locale Formatting](#locale-formatting)
+  - [Relative Time And Plural Selection](#relative-time-and-plural-selection)
 - [Logging](#logging)
 - [DOM Binding](#dom-binding)
   - [Native Language Select](#native-language-select)
@@ -674,11 +675,13 @@ translator.formatCurrency(12, {
 translator.formatDate("2026-09-30", { year: "2-digit" });
 translator.formatTime("09:30");
 translator.formatWeekday(0, { width: "short" }); // Monday = 0
+translator.formatRelativeTime(-1, "day");
+translator.selectPlural(2); // A plural-category label, not a phrase.
 ```
 
 The root entry also exports standalone `formatNumber()`, `formatCurrency()`, `formatDate()`,
-`formatTime()`, and `formatWeekday()` functions for code that does not need a translator instance.
-They take the language as an explicit argument.
+`formatTime()`, `formatWeekday()`, `formatRelativeTime()`, and `selectPlural()` functions for code
+that does not need a translator instance. They take the language as an explicit argument.
 
 ```ts
 import { formatCurrency, formatDate } from "@unilarva/translator";
@@ -712,6 +715,75 @@ Invalid inputs and invalid recognized `Intl` option values throw. Unknown option
 by `Intl`; the adapters do not validate every future platform option. Translator methods log failures
 first when a logger is configured, then rethrow them. Exact locale output depends on the host's
 `Intl` implementation and installed locale data.
+
+### Relative Time And Plural Selection
+
+The root entry exports these additive APIs and option types:
+
+```ts
+type RelativeTimeFormatOptions = Intl.RelativeTimeFormatOptions & LocaleFormatOptions;
+type PluralSelectOptions = Intl.PluralRulesOptions & LocaleFormatOptions;
+
+function formatRelativeTime(
+  value: number,
+  unit: Intl.RelativeTimeFormatUnit,
+  language: string,
+  options?: RelativeTimeFormatOptions,
+): string;
+function selectPlural(
+  value: number,
+  language: string,
+  options?: PluralSelectOptions,
+): Intl.LDMLPluralRule;
+```
+
+Both functions default `options` to `{}`. The corresponding Translator methods are
+`formatRelativeTime(value, unit, options = {})` and `selectPlural(value, options = {})`, with the
+same value, unit, option, and return types. They use the active language unless `options.language`
+overrides it. `LocaleFormatOptions` supplies that shared language override.
+
+```ts
+import { formatRelativeTime, selectPlural } from "@unilarva/translator";
+
+formatRelativeTime(-1, "day", "en"); // "1 day ago"
+formatRelativeTime(-1, "days", "en", { numeric: "auto" }); // "yesterday"
+translator.formatRelativeTime(2, "week", { language: "en", style: "short" });
+selectPlural(1, "en"); // "one"
+translator.selectPlural(2, { language: "en" }); // "other"
+selectPlural(2, "en", { type: "ordinal" }); // "two"
+selectPlural(1.2, "en", { maximumFractionDigits: 0 }); // "one" after rounding
+```
+
+`formatRelativeTime()` delegates to `Intl.RelativeTimeFormat`, preserving its native defaults:
+`style: "long"` and `numeric: "always"`. Negative values describe the past and positive values the
+future. Native singular and plural unit names are supported: `year(s)`, `quarter(s)`, `month(s)`,
+`week(s)`, `day(s)`, `hour(s)`, `minute(s)`, and `second(s)`. The application chooses the unit and
+computes any date difference; the helper does not choose units, read a clock, or install timers.
+
+`selectPlural()` delegates to `Intl.PluralRules`, defaulting to `type: "cardinal"`. It returns an
+`Intl.LDMLPluralRule` category: `zero`, `one`, `two`, `few`, `many`, or `other`. These are rule labels,
+not translated phrases or a universal singular/plural distinction; languages use different subsets.
+Native digit and rounding options affect which category is selected. The helper does not compile
+plural messages or select translation keys automatically.
+
+If you use a category to choose a message key, the plural-rule language must match the language of
+the resolved message. Ordinary translation fallback can resolve a different language and therefore
+produce a mismatch. Use complete category-message coverage for the intended language and explicitly
+use that same language for both rule selection and message lookup; an override alone does not disable
+the ordinary lookup fallback chain.
+
+Both helpers require a finite JavaScript number. `NaN`, infinities, numeric strings, and other
+non-number inputs throw `RangeError`, with no numeric string coercion. Units and native `Intl`
+options retain native validation and coercion rather than a separate package allowlist. Translator
+methods log the original error through `relative-time-format-failed` or `plural-select-failed`,
+respectively, then rethrow that same error. Standalone helpers throw without translator logging.
+
+Locale support and exact results depend on the host's `Intl` implementation and locale data, not on
+the translation catalog or its fallback policy. Each formatter family uses a bounded cache under
+the existing shared cache policy; object-valued option coercions bypass caching so their observable
+behavior is preserved. The new helpers also bypass caching for accessor properties and custom option
+prototypes, preserving native reads of inherited and non-enumerable options without invoking unknown
+option getters. These helpers remain DOM-free and add no runtime dependencies or DOM markers.
 
 ## Logging
 
@@ -1102,6 +1174,9 @@ unsigned decimal digits from `0` through `20` (leading zeros are allowed); blank
 whitespace, signs, exponents, and hexadecimal notation are invalid. This conservative DOM-marker range
 is narrower than options supported by some newer host `Intl` implementations.
 
+There are no built-in relative-time or plural-selection markers. Call the core helpers from
+application code; application-owned rendering and update scheduling remain explicit.
+
 ## Semantic Rich Translations
 
 Rich translations use named semantic tokens without HTML attributes:
@@ -1295,7 +1370,10 @@ eventually emits them.
 The root entry exports:
 
 - `Translator` and `normalizeLanguageTag()`;
-- standalone number, currency, calendar-date, clock-time, and weekday formatters;
+- standalone number, currency, calendar-date, clock-time, weekday, and relative-time formatters,
+  plus `selectPlural()` returning `Intl.LDMLPluralRule`;
+- `RelativeTimeFormatOptions` and `PluralSelectOptions`, combining their native `Intl` options
+  with `LocaleFormatOptions`;
 - `parseRichText()` and `translateRichText()`;
 - `TranslationCatalogChangeEvent`, `TranslatorCopyOptions`, and the TypeScript types used by translation bundles, language registries, imports, loading, logging,
   formatting, and semantic rich-text nodes.

@@ -44,6 +44,12 @@ export interface LocaleFormatOptions {
 /** Number formatting options with an optional language override. */
 export type NumberFormatOptions = Intl.NumberFormatOptions & LocaleFormatOptions;
 
+/** Native relative-time options with a locale override; defaults to long, numeric-always output. */
+export type RelativeTimeFormatOptions = Intl.RelativeTimeFormatOptions & LocaleFormatOptions;
+
+/** Native plural-rule and rounding options with a locale override; defaults to cardinal rules. */
+export type PluralSelectOptions = Intl.PluralRulesOptions & LocaleFormatOptions;
+
 /** Currency formatting requires an explicit ISO 4217 currency code. */
 export interface CurrencyFormatOptions extends Intl.NumberFormatOptions, LocaleFormatOptions {
   /** Required three-letter ASCII code, uppercased before formatting; existence is not checked. */
@@ -92,6 +98,8 @@ const CACHE_LIMIT = 64;
 const MAX_CACHE_KEY_LENGTH = 2048;
 const numberFormatters = new Map<string, Intl.NumberFormat>();
 const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+const relativeTimeFormatters = new Map<string, Intl.RelativeTimeFormat>();
+const pluralRules = new Map<string, Intl.PluralRules>();
 
 /** Creates an order-independent primitive-options key, or skips unsafe/oversized caching. */
 function formatterKey(language: string, options: object): string | undefined {
@@ -115,6 +123,22 @@ function formatterKey(language: string, options: object): string | undefined {
     entries.map(([name, value]) => [name, typeof value, value]),
   ]);
   return key.length <= MAX_CACHE_KEY_LENGTH ? key : undefined;
+}
+
+/** Inspects data properties without invoking getters; richer options retain native property reads. */
+function nativeFormatterKey(language: string, options: object): string | undefined {
+  const prototype = Object.getPrototypeOf(options);
+  if (prototype !== Object.prototype && prototype !== null) return undefined;
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  if (Object.values(descriptors).some(descriptor => !("value" in descriptor))) return undefined;
+  return formatterKey(
+    language,
+    Object.fromEntries(
+      Object.entries(descriptors)
+        .filter(([name]) => name !== "language")
+        .map(([name, descriptor]) => [name, descriptor.value]),
+    ),
+  );
 }
 
 /** Reuses or creates a formatter with bounded LRU eviction; undefined keys bypass the cache. */
@@ -253,6 +277,56 @@ export function formatNumber(
     formatterKey(tag, intlOptions),
     () => new Intl.NumberFormat(tag, intlOptions),
   ).format(finiteNumber(value, "Number"));
+}
+
+/**
+ * Formats a signed relative amount in an explicit unit; does not calculate date differences.
+ * Negative values describe the past and positive values the future, using native Intl defaults.
+ *
+ * @param value - Finite signed amount; fractions and negative zero retain native Intl semantics.
+ * @param unit - Native singular or plural unit from year through second, including quarter and week.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Native relative-time options and locale override; defaults to `{}`.
+ * @returns Localized relative-time text, not a live clock or automatically chosen unit.
+ * @throws {RangeError} If the amount is nonfinite or the effective locale, unit, or options are invalid.
+ * @throws {TypeError} If native Intl rejects option or unit coercion.
+ */
+export function formatRelativeTime(
+  value: number,
+  unit: Intl.RelativeTimeFormatUnit,
+  language: string,
+  options: RelativeTimeFormatOptions = {},
+): string {
+  const tag = locale(options.language ?? language);
+  return cachedFormatter(
+    relativeTimeFormatters,
+    nativeFormatterKey(tag, options),
+    () => new Intl.RelativeTimeFormat(tag, options),
+  ).format(finiteNumber(value, "Relative time amount"), unit);
+}
+
+/**
+ * Selects a native plural category, not a translated phrase or catalog key.
+ * Native rounding options affect selection; no translation fallback or message parsing occurs.
+ *
+ * @param value - Finite number; negative and fractional values follow native plural rules.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Native plural-rule/rounding options and locale override; defaults to cardinal rules.
+ * @returns One of `zero`, `one`, `two`, `few`, `many`, or `other` for the effective locale.
+ * @throws {RangeError} If the number is nonfinite or the effective locale/options are invalid.
+ * @throws {TypeError} If native Intl rejects option coercion.
+ */
+export function selectPlural(
+  value: number,
+  language: string,
+  options: PluralSelectOptions = {},
+): Intl.LDMLPluralRule {
+  const tag = locale(options.language ?? language);
+  return cachedFormatter(
+    pluralRules,
+    nativeFormatterKey(tag, options),
+    () => new Intl.PluralRules(tag, options),
+  ).select(finiteNumber(value, "Plural value"));
 }
 
 /**

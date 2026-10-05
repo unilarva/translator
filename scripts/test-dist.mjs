@@ -36,6 +36,10 @@ translator.importTranslations({
 });
 
 assert.equal(translator.translateKey("smoke"), "Built package");
+assert.equal(core.formatRelativeTime(-1, "day", "en", { numeric: "auto" }), "yesterday");
+assert.equal(core.selectPlural(2, "en", { type: "ordinal" }), "two");
+assert.equal(translator.formatRelativeTime(0, "day", { numeric: "auto" }), "today");
+assert.equal(translator.selectPlural(1), "one");
 assert.equal(typeof dom.bindTranslator, "function");
 assert.equal(typeof dom.bindLanguageSelect, "function");
 assert.equal(typeof dom.bindLanguageDetails, "function");
@@ -90,9 +94,13 @@ try {
       "--eval",
       `
       import assert from "node:assert/strict";
-      import { Translator } from "@unilarva/translator";
+      import { Translator, formatRelativeTime, selectPlural } from "@unilarva/translator";
       import { bindTranslator, bindLanguageSelect, bindLanguageDetails } from "@unilarva/translator/dom";
       const translator = new Translator({ language: "en" });
+      assert.equal(formatRelativeTime(-1, "day", "en", { numeric: "auto" }), "yesterday");
+      assert.equal(selectPlural(2, "en", { type: "ordinal" }), "two");
+      assert.equal(translator.formatRelativeTime(0, "day", { numeric: "auto" }), "today");
+      assert.equal(translator.selectPlural(1), "one");
       const catalogEvents = [];
       const unsubscribeCatalog = translator.subscribeCatalog(event => catalogEvents.push(event));
       translator.setTranslation("smoke", { en: "Installed package" });
@@ -129,7 +137,7 @@ try {
       "core",
       ["ES2022"],
       `
-      import { Translator, formatDate, parseRichText, type TranslationBundle, type TranslationCatalogChangeEvent, type TranslatorCopyOptions } from "@unilarva/translator";
+      import { Translator, formatDate, formatRelativeTime, selectPlural, parseRichText, type RelativeTimeFormatOptions, type PluralSelectOptions, type TranslationBundle, type TranslationCatalogChangeEvent, type TranslatorCopyOptions } from "@unilarva/translator";
       const bundle: TranslationBundle = { "translator-i18n": { "language-data": { en: { greeting: "Hello" } } } };
       const translator = new Translator({ language: "en" });
       const unsubscribeCatalog = translator.subscribeCatalog((event: TranslationCatalogChangeEvent) => {
@@ -147,6 +155,18 @@ try {
       translator.copyFrom(translator, { mode: "replace-all" });
       const text: string = translator.translateKey("greeting");
       formatDate("2026-10-03", "en");
+      const relativeOptions: RelativeTimeFormatOptions = { numeric: "auto", language: "fi" };
+      const pluralOptions: PluralSelectOptions = { type: "ordinal", maximumFractionDigits: 0 };
+      const relative: string = formatRelativeTime(-1, "day", "en", relativeOptions);
+      const category: Intl.LDMLPluralRule = selectPlural(2, "en", pluralOptions);
+      const methodCategory: Intl.LDMLPluralRule = translator.selectPlural(2, pluralOptions);
+      translator.formatRelativeTime(1, "weeks", relativeOptions);
+      // @ts-expect-error Relative time requires a native unit name.
+      formatRelativeTime(1, "fortnight", "en");
+      // @ts-expect-error Plural categories are a union, not arbitrary strings.
+      const invalidCategory: typeof methodCategory = "unknown";
+      // @ts-expect-error Rule type is cardinal or ordinal.
+      translator.selectPlural(2, { type: "select" });
       parseRichText(text, []);
       translator.setTranslation("greeting", {});
       unsubscribeCatalog();

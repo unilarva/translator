@@ -124,6 +124,24 @@ through bounded caches keyed by canonical locale and effective primitive options
 option coercion or the host
 time zone can remain observable between calls.
 
+Relative-time formatting and plural-category selection are thin adapters over
+`Intl.RelativeTimeFormat` and `Intl.PluralRules`. Their root-exported option types intersect native
+options with `LocaleFormatOptions`; Translator methods resolve the active language or per-call
+`options.language` override and delegate to these adapters. Require finite number inputs without
+coercion, throwing `RangeError` otherwise. Preserve native unit and option validation/coercion,
+including singular/plural relative-time units, long/numeric-always defaults, cardinal plural rules,
+and digit/rounding effects on categories. Return `Intl.LDMLPluralRule` labels rather than messages.
+
+Keep a separate bounded cache for each Intl family using the existing shared cache policy and
+canonical locale/effective primitive option keys. Object-valued option coercions bypass caching;
+the new helpers inspect data-property descriptors for cache keys and pass original options to Intl.
+Accessors and custom prototypes bypass caching to retain native option reads without invoking unknown
+getters. Cache reuse must not hide observable coercion. Host locale negotiation and data determine support,
+not catalog fallback. Do not add automatic unit selection, date differences, clocks, timers, plural
+message compilation, runtime dependencies, or DOM markers for these helpers. Consumers selecting
+message keys from categories must align the rule language with the resolved message language;
+ordinary translation fallback does not guarantee that alignment.
+
 ### `src/rich-text.ts`
 
 Owns semantic rich-text parsing and its node representation. The parser recognizes only explicitly
@@ -389,8 +407,11 @@ reject.
 Logging is optional observation, never control flow. Logger callbacks receive detached immutable
 array/plain-record detail containers through the safe adapter; opaque objects and the original error
 reference are deliberately retained.
-Their own failures are ignored. Language, catalog, and registry subscribers and DOM extensions are isolated so
-one consumer callback cannot prevent later callbacks or elements from updating.
+Logger failures are ignored. Language, catalog, and registry subscribers and DOM extensions are
+isolated so one consumer callback cannot prevent later callbacks or elements from updating.
+
+Translator relative-time and plural-selection methods log `relative-time-format-failed` and
+`plural-select-failed`, respectively, with the original error, then rethrow that same error.
 
 Subscriber and logger callbacks run synchronously and are never awaited. Observe accidental returned
 promises/thenables through native promise assimilation: subscriber rejections emit ordinary failure
@@ -485,10 +506,10 @@ updates.
 
 ## Future Enhancements
 
-These are candidate directions, not release commitments. Keep the first release focused rather than
-adding speculative framework or plugin machinery. None of the additive approaches below requires
-another API change before the first release; preserve the existing grammar, events, ownership, and
-rendering guarantees instead of silently repurposing them later.
+These are candidate directions, not release commitments. The package is already published, with
+`0.3.0` as its first public release. Keep subsequent work focused rather than adding speculative
+framework or plugin machinery. Prefer additive, opt-in APIs that preserve the existing grammar,
+events, ownership, and rendering guarantees instead of silently repurposing them.
 
 ### Inserted Markup Observation
 
@@ -502,9 +523,10 @@ catalog changes or lookup-policy changes.
 `translateKey(key, { interpolate: false })` already provides raw resolved source for consumer-owned
 parsers and message compilers. Future plural/select messages or ICU integration should use an explicit
 message API or separately identified compiled-message format, not reinterpret ordinary `{name}`
-strings. Replacing the default interpolation grammar would be a compatibility change and would need
-to be decided before release; the preferred approach is additive and opt-in. Keep compilation or
-dependency-heavy integrations outside the zero-runtime-dependency core.
+strings. `selectPlural()` already exposes native category selection, not message compilation.
+Replacing the default interpolation grammar would be a documented compatibility change;
+the preferred approach is additive and opt-in. Keep compilation or dependency-heavy integrations
+outside the zero-runtime-dependency core.
 
 ### Typed Keys And Catalog Tooling
 
@@ -514,9 +536,10 @@ validation for downloaded or parsed data even when authoring tools produce stati
 
 ### Additional Intl Helpers
 
-Formatting parts, ranges, relative time, and plural-rule selection can be added as named helpers
-without changing existing signatures. Retain the distinction between calendar values, clock values,
-and Date instants, and keep locale-data dependence and formatter-cache behavior explicit.
+Relative-time formatting and plural-rule selection are implemented as additive named helpers and
+Translator methods. Formatting parts and ranges remain future candidates that can be added without
+changing existing signatures. Retain the distinction between calendar values, clock values, and
+Date instants, and keep locale-data dependence and formatter-cache behavior explicit.
 
 ### Framework Adapters
 
@@ -530,7 +553,7 @@ dependencies in adapters rather than the core or ordinary DOM binding.
 A new explicit option and enumeration API could support ordered fallback chains. Preserve the
 existing singular fallback getter's meaning and define how the chain interacts with requested,
 active, and first-available languages. Replacing the singular contract would be a compatibility
-change, but an additive chain API needs no preparation before the first release.
+change, but an additive chain API can preserve the existing consumer contract.
 
 ### Rich Grammar And Asynchronous Rendering
 
@@ -538,7 +561,7 @@ Broader token grammar or asynchronous rendering should use separate opt-in APIs.
 tokens attribute-free, URLs consumer-owned, and current extension callbacks synchronous and
 unawaited. An asynchronous API would need explicit ordering, cancellation, stale-result, and disposal
 semantics. Replacing the current grammar, node variants, or callback contract could break consumers
-and would require a pre-release decision; it is not necessary for the additive roadmap.
+and would require a documented compatibility change; it is not necessary for the additive roadmap.
 
 ## Distribution And Release
 
@@ -581,10 +604,10 @@ Keep the npm pin aligned across both GitHub workflows, GitLab's default and isol
 and this development guide. Release tests assert job coverage and ordering. When updating it, verify
 the npm release's Node engine range against both tested runtimes and run the complete package gate.
 
-The first publication uses local account 2FA because npm trust requires an existing package.
-Disable automated publication for the bootstrap tag, publish its qualified tarball without OIDC
-provenance, then configure the selected CI provider as the package's npm trusted publisher for
-subsequent releases. Keep account credentials and infrastructure setup out of published guides.
+The package is already published, so the initial publication bootstrap is no longer a release step.
+Subsequent releases should use the selected CI provider configured as the package's npm trusted
+publisher, publishing the qualified candidate with provenance; do not repeat bootstrap publication.
+Keep account credentials and infrastructure setup out of published guides.
 
 Release checklist:
 

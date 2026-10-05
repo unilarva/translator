@@ -38,13 +38,17 @@ import {
   formatCurrency as formatCurrencyValue,
   formatDate as formatDateValue,
   formatNumber as formatNumberValue,
+  formatRelativeTime as formatRelativeTimeValue,
   formatTime as formatTimeValue,
   formatWeekday as formatWeekdayValue,
+  selectPlural as selectPluralValue,
   type CalendarDate,
   type ClockTime,
   type CurrencyFormatOptions,
   type DateFormatOptions,
   type NumberFormatOptions,
+  type PluralSelectOptions,
+  type RelativeTimeFormatOptions,
   type TimeFormatOptions,
   type WeekdayFormatOptions,
 } from "./intl.js";
@@ -1010,6 +1014,37 @@ export class Translator {
   }
 
   /**
+   * Formats a signed relative amount in an explicit unit using the active language unless overridden.
+   * @param value - Finite amount; negative means past and positive means future.
+   * @param unit - Native singular or plural relative-time unit; no automatic unit selection occurs.
+   * @param options - Intl relative-time options and locale override; defaults to long/numeric-always.
+   * @returns Localized relative-time text; does not calculate date differences or update over time.
+   * @throws RangeError for nonfinite values; locale/unit/Intl errors are logged and rethrown.
+   */
+  public formatRelativeTime(
+    value: number,
+    unit: Intl.RelativeTimeFormatUnit,
+    options: RelativeTimeFormatOptions = {},
+  ): string {
+    return this.#format("relative-time-format-failed", () =>
+      formatRelativeTimeValue(value, unit, this.#language, options),
+    );
+  }
+
+  /**
+   * Selects a plural category using the active language unless overridden; does not translate messages.
+   * @param value - Finite number, including negative and fractional values.
+   * @param options - Intl plural-rule/rounding options and locale override; defaults to cardinal rules.
+   * @returns Native category `zero`, `one`, `two`, `few`, `many`, or `other`.
+   * @throws RangeError for nonfinite values; locale/Intl option errors are logged and rethrown.
+   */
+  public selectPlural(value: number, options: PluralSelectOptions = {}): Intl.LDMLPluralRule {
+    return this.#format("plural-select-failed", () =>
+      selectPluralValue(value, this.#language, options),
+    );
+  }
+
+  /**
    * Formats a finite amount with forced currency style and an uppercased currency code.
    * @param value - Finite currency amount.
    * @param options - Required three-letter currency code, Intl options, and optional language override.
@@ -1331,7 +1366,7 @@ export class Translator {
   }
 
   /** Runs a locale formatter, logging failures before rethrowing the original error. */
-  #format(event: string, format: () => string): string {
+  #format<T extends string>(event: string, format: () => T): T {
     try {
       return format();
     } catch (error) {

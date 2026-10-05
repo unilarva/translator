@@ -13,7 +13,14 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { Window } from "happy-dom";
 
-import { Translator } from "../src/index.ts";
+import {
+  Translator,
+  formatRelativeTime,
+  selectPlural,
+  type PluralSelectOptions,
+  type RelativeTimeFormatOptions,
+  type TranslatorLogEntry,
+} from "../src/index.ts";
 import { bindTranslator, intlDomExtension } from "../src/dom.ts";
 import {
   formatCurrency,
@@ -25,6 +32,333 @@ import {
   type TimeFormatOptions,
 } from "../src/intl.ts";
 import { asElement, asParentNode } from "./dom-test-utils.ts";
+
+test("relative time retains native units, signed amounts, options, and locale output", () => {
+  const units: Intl.RelativeTimeFormatUnit[] = [
+    "year",
+    "quarter",
+    "month",
+    "week",
+    "day",
+    "hour",
+    "minute",
+    "second",
+    "years",
+    "quarters",
+    "months",
+    "weeks",
+    "days",
+    "hours",
+    "minutes",
+    "seconds",
+  ];
+  const choices: RelativeTimeFormatOptions[] = [
+    {},
+    { numeric: "auto" },
+    { style: "short" },
+    { style: "narrow", numeric: "auto" },
+  ];
+  for (const language of ["en", "fi", "ar"]) {
+    for (const options of choices) {
+      const native = new Intl.RelativeTimeFormat(language, options);
+      for (const unit of units) {
+        for (const value of [-2, -0, 0, 1, 1.5]) {
+          assert.equal(
+            formatRelativeTime(value, unit, language, options),
+            native.format(value, unit),
+          );
+        }
+      }
+    }
+  }
+  assert.notEqual(formatRelativeTime(-0, "day", "en"), formatRelativeTime(0, "day", "en"));
+  assert.equal(formatRelativeTime(-1, "day", "en", { numeric: "auto" }), "yesterday");
+  assert.equal(formatRelativeTime(0, "day", "en", { numeric: "auto" }), "today");
+});
+
+test("plural selection follows locale, cardinal/ordinal rules, and native rounding", () => {
+  const choices: PluralSelectOptions[] = [
+    {},
+    { type: "ordinal" },
+    { minimumFractionDigits: 1 },
+    { maximumFractionDigits: 0 },
+    { maximumSignificantDigits: 1 },
+  ];
+  for (const language of ["en", "fi", "ru", "ar"]) {
+    for (const options of choices) {
+      const native = new Intl.PluralRules(language, options);
+      for (const value of [-2, -1, -0, 0, 1, 2, 3, 5, 11, 21, 1.2, 2.5, 101]) {
+        assert.equal(selectPlural(value, language, options), native.select(value));
+      }
+    }
+  }
+  assert.equal(selectPlural(1, "en"), "one");
+  assert.equal(selectPlural(1, "en", { minimumFractionDigits: 1 }), "other");
+  assert.equal(selectPlural(1.2, "en", { maximumFractionDigits: 0 }), "one");
+  assert.equal(selectPlural(2, "en", { type: "ordinal" }), "two");
+  assert.equal(selectPlural(3, "ru"), "few");
+  assert.equal(selectPlural(0, "ar"), "zero");
+});
+
+test("new Intl methods use active locale or override, without modifying translator state", () => {
+  const translator = new Translator({ language: "en", fallbackLanguage: "ar" });
+  translator.setTranslation("item", { ar: "Fallback only" });
+  let notifications = 0;
+  translator.subscribe(() => notifications++);
+  translator.subscribeCatalog(() => notifications++);
+  translator.subscribeLanguages(() => notifications++);
+  const assertLocale = (language: string): void => {
+    assert.equal(
+      translator.formatRelativeTime(-2, "days"),
+      new Intl.RelativeTimeFormat(language).format(-2, "day"),
+    );
+    assert.equal(translator.selectPlural(3), new Intl.PluralRules(language).select(3));
+  };
+  assertLocale("en");
+  translator.setLanguage("ru");
+  assertLocale("ru");
+  assert.equal(notifications, 1);
+  const relativeOptions = { language: " en_GB ", numeric: "auto" } as const;
+  assert.equal(translator.formatRelativeTime(-1, "day", relativeOptions), "yesterday");
+  assert.equal(formatRelativeTime(-1, "day", "!invalid!", relativeOptions), "yesterday");
+  assert.equal(translator.selectPlural(0, { language: "ar" }), "zero");
+  assert.equal(selectPlural(0, "!invalid!", { language: " ar " }), "zero");
+  assert.equal(translator.getLanguage(), "ru");
+  assert.equal(translator.translateKey("item"), "Fallback only");
+  assert.equal(notifications, 1);
+  assert.deepEqual(relativeOptions, { language: " en_GB ", numeric: "auto" });
+});
+
+test("new Intl helpers preserve inherited/non-enumerable options and ignore unknown getters", () => {
+  class PluralOptions implements PluralSelectOptions {
+    get type(): "ordinal" {
+      return "ordinal";
+    }
+  }
+  class RelativeOptions implements RelativeTimeFormatOptions {
+    get numeric(): "auto" {
+      return "auto";
+    }
+  }
+  const plural = new PluralOptions();
+  const relative = new RelativeOptions();
+  assert.equal(selectPlural(2, "en", plural), "two");
+  assert.equal(formatRelativeTime(0, "day", "en", relative), "today");
+  const nonEnumerablePlural = Object.defineProperty({}, "type", { value: "ordinal" });
+  const nonEnumerableRelative = Object.defineProperty({}, "numeric", { value: "auto" });
+  assert.equal(selectPlural(2, "en", nonEnumerablePlural), "two");
+  assert.equal(formatRelativeTime(0, "day", "en", nonEnumerableRelative), "today");
+  for (const options of [plural, relative, nonEnumerablePlural, nonEnumerableRelative, {}]) {
+    Object.defineProperty(options, "ignoredOption", {
+      enumerable: true,
+      get() {
+        throw new Error("Native Intl ignores this option");
+      },
+    });
+    assert.equal(selectPlural(2, "en", options), new Intl.PluralRules("en", options).select(2));
+    assert.equal(
+      formatRelativeTime(0, "day", "en", options),
+      new Intl.RelativeTimeFormat("en", options).format(0, "day"),
+    );
+  }
+  let type: "cardinal" | "ordinal" = "cardinal";
+  let numeric: "always" | "auto" = "always";
+  const livePlural = {
+    get type() {
+      return type;
+    },
+  };
+  const liveRelative = {
+    get numeric() {
+      return numeric;
+    },
+  };
+  assert.equal(selectPlural(2, "en", livePlural), "other");
+  assert.notEqual(formatRelativeTime(0, "day", "en", liveRelative), "today");
+  type = "ordinal";
+  numeric = "auto";
+  assert.equal(selectPlural(2, "en", livePlural), "two");
+  assert.equal(formatRelativeTime(0, "day", "en", liveRelative), "today");
+});
+
+test("relative time and plural selection reject nonfinite and nonnumeric values without coercion", () => {
+  const object = {
+    valueOf() {
+      throw new Error("Must not coerce numeric input");
+    },
+  };
+  for (const value of [NaN, Infinity, -Infinity, "1", null, undefined, 1n, object]) {
+    assert.throws(() => formatRelativeTime(value as number, "day", "en"), RangeError);
+    assert.throws(() => selectPlural(value as number, "en"), RangeError);
+  }
+  for (const language of ["", " ", "not_a_valid_locale_!"]) {
+    assert.throws(() => formatRelativeTime(1, "day", language), RangeError);
+    assert.throws(() => selectPlural(1, language), RangeError);
+  }
+  // @ts-expect-error Relative time accepts only native unit names.
+  assert.throws(() => formatRelativeTime(1, "fortnight", "en"), RangeError);
+  // @ts-expect-error Numeric mode is native always or auto.
+  assert.throws(() => formatRelativeTime(1, "day", "en", { numeric: "sometimes" }), RangeError);
+  // @ts-expect-error Style is native long, short, or narrow.
+  assert.throws(() => formatRelativeTime(1, "day", "en", { style: "wide" }), RangeError);
+  // @ts-expect-error Rule type is cardinal or ordinal, not message selection.
+  assert.throws(() => selectPlural(1, "en", { type: "select" }), RangeError);
+  assert.throws(() => selectPlural(1, "en", { minimumFractionDigits: -1 }), RangeError);
+  assert.throws(
+    () => selectPlural(1, "en", { minimumFractionDigits: 3, maximumFractionDigits: 2 }),
+    RangeError,
+  );
+});
+
+test("new Intl failure diagnostics preserve original errors even if the logger fails", () => {
+  const entries: TranslatorLogEntry[] = [];
+  const translator = new Translator({
+    logger(entry) {
+      entries.push(entry);
+      throw new Error("Logger failed");
+    },
+  });
+  const error = new Error("Option coercion failed");
+  const dynamic = {
+    toString() {
+      throw error;
+    },
+  };
+  const relative = { style: dynamic as unknown as "long" };
+  const plural = { type: dynamic as unknown as "cardinal" };
+  assert.throws(
+    () => translator.formatRelativeTime(1, "day", relative),
+    thrown => thrown === error,
+  );
+  assert.throws(
+    () => translator.selectPlural(1, plural),
+    thrown => thrown === error,
+  );
+  assert.deepEqual(
+    entries.map(entry => [entry.component, entry.event, entry.error]),
+    [
+      ["intl", "relative-time-format-failed", error],
+      ["intl", "plural-select-failed", error],
+    ],
+  );
+  assert.throws(
+    () => formatRelativeTime(1, "day", "en", relative),
+    thrown => thrown === error,
+  );
+  assert.throws(
+    () => selectPlural(1, "en", plural),
+    thrown => thrown === error,
+  );
+  assert.equal(entries.length, 2);
+  assert.throws(() => translator.formatRelativeTime(Infinity, "day"), RangeError);
+  assert.throws(() => translator.selectPlural(NaN), RangeError);
+  assert.deepEqual(
+    entries.slice(2).map(entry => entry.event),
+    ["relative-time-format-failed", "plural-select-failed"],
+  );
+});
+
+test("relative-time and plural caches reuse canonical locales and snapshot effective options", t => {
+  const Relative = Intl.RelativeTimeFormat;
+  const Plural = Intl.PluralRules;
+  let relatives = 0;
+  let plurals = 0;
+  t.mock.method(
+    Intl,
+    "RelativeTimeFormat",
+    function (...args: ConstructorParameters<typeof Relative>) {
+      relatives++;
+      return new Relative(...args);
+    },
+  );
+  t.mock.method(Intl, "PluralRules", function (...args: ConstructorParameters<typeof Plural>) {
+    plurals++;
+    return new Plural(...args);
+  });
+  const relativeOptions: RelativeTimeFormatOptions = { style: "short", numeric: "auto" };
+  formatRelativeTime(1, "day", "en-x-reuse", relativeOptions);
+  formatRelativeTime(2, "hours", "EN_x_reuse", { numeric: "auto", style: "short" });
+  assert.equal(relatives, 1);
+  relativeOptions.style = "narrow";
+  formatRelativeTime(1, "day", "en-x-reuse", relativeOptions);
+  formatRelativeTime(1, "day", "fi-x-reuse", relativeOptions);
+  formatRelativeTime(1, "day", "en-x-reuse", { ...relativeOptions, language: "fi-x-reuse" });
+  assert.equal(relatives, 3);
+  const pluralOptions: PluralSelectOptions = { type: "ordinal", minimumFractionDigits: 0 };
+  selectPlural(1, "en-x-reuse", pluralOptions);
+  selectPlural(2, "EN_x_reuse", { minimumFractionDigits: 0, type: "ordinal" });
+  assert.equal(plurals, 1);
+  pluralOptions.type = "cardinal";
+  selectPlural(1, "en-x-reuse", pluralOptions);
+  selectPlural(1, "fi-x-reuse", pluralOptions);
+  selectPlural(1, "en-x-reuse", { ...pluralOptions, language: "fi-x-reuse" });
+  assert.equal(plurals, 3);
+});
+
+test("new Intl caches bypass observable coercion and oversized keys and evict old entries", t => {
+  const Relative = Intl.RelativeTimeFormat;
+  const Plural = Intl.PluralRules;
+  let relatives = 0;
+  let plurals = 0;
+  t.mock.method(
+    Intl,
+    "RelativeTimeFormat",
+    function (...args: ConstructorParameters<typeof Relative>) {
+      relatives++;
+      return new Relative(...args);
+    },
+  );
+  t.mock.method(Intl, "PluralRules", function (...args: ConstructorParameters<typeof Plural>) {
+    plurals++;
+    return new Plural(...args);
+  });
+  let coercions = 0;
+  const numeric = { toString: () => (++coercions === 1 ? "always" : "auto") };
+  assert.notEqual(
+    formatRelativeTime(0, "day", "en", { numeric: numeric as unknown as "auto" }),
+    formatRelativeTime(0, "day", "en", { numeric: numeric as unknown as "auto" }),
+  );
+  assert.equal(coercions, 2);
+  coercions = 0;
+  const digits = { valueOf: () => coercions++ };
+  assert.equal(
+    selectPlural(1, "en", { minimumFractionDigits: digits as unknown as number }),
+    "one",
+  );
+  assert.equal(
+    selectPlural(1, "en", { minimumFractionDigits: digits as unknown as number }),
+    "other",
+  );
+  assert.equal(coercions, 2);
+  const oversized = { ignoredOption: "x".repeat(2048) };
+  for (let count = 0; count < 2; count++) {
+    formatRelativeTime(1, "day", "en", oversized as RelativeTimeFormatOptions);
+    selectPlural(1, "en", oversized as PluralSelectOptions);
+  }
+  assert.equal(relatives, 4);
+  assert.equal(plurals, 4);
+  for (let index = 0; index <= 70; index++) {
+    formatRelativeTime(1, "day", `en-x-bounds-${index}`);
+    selectPlural(1, `en-x-bounds-${index}`);
+  }
+  formatRelativeTime(2, "hour", "en-x-bounds-70");
+  selectPlural(2, "en-x-bounds-70");
+  assert.equal(relatives, 75);
+  assert.equal(plurals, 75);
+  formatRelativeTime(2, "hour", "en-x-bounds-0");
+  selectPlural(2, "en-x-bounds-0");
+  assert.equal(relatives, 76);
+  assert.equal(plurals, 76);
+  for (let count = 0; count < 2; count++) {
+    assert.throws(
+      () => formatRelativeTime(1, "day", "en", { numeric: "invalid" as "auto" }),
+      RangeError,
+    );
+    assert.throws(() => selectPlural(1, "en", { type: "invalid" as "cardinal" }), RangeError);
+  }
+  assert.equal(relatives, 78);
+  assert.equal(plurals, 78);
+});
 
 test("formats numbers, currencies, calendar dates, clock times, and weekdays", () => {
   const translator = new Translator({ language: "fi" });

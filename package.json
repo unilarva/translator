@@ -1,6 +1,6 @@
 {
   "name": "@unilarva/translator",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Zero-dependency TypeScript i18n with runtime catalogs, optional typed keys, ordered language fallbacks, Intl helpers, semantic rich text, and optional DOM bindings.",
   "keywords": [

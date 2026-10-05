@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-10-05
+
 - Add ordered multiple fallback languages through `TranslatorOptions.additionalFallbackLanguages`
   (default `[]`), `setAdditionalFallbackLanguages()`, `getAdditionalFallbackLanguages()`, and
   `getFallbackLanguages()`. Lookup expands requested, active, primary, and each additional tag to

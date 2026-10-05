@@ -35,7 +35,8 @@ servers, workers, and command-line tools; browser integration is isolated in
 - **Application-controlled rich text.** Translations can contain approved semantic tokens, while
   consumer renderers create every resulting element and own its attributes and URLs. The same
   semantic node representation is available to application-owned SSR serializers.
-- **Locale-aware and deterministic.** Canonical BCP 47 language tags, progressive subtag fallback,
+- **Locale-aware and deterministic.** Canonical BCP 47 language tags, ordered multiple fallback
+  languages with progressive subtag fallback,
   configurable missing-value behavior, and strict `Intl` helpers for formatting, relative time,
   and plural-category selection keep lookup and formatting rules explicit.
 - **Scoped UIs and synchronized language controls.** Bind a document or subtree, use independent
@@ -94,6 +95,7 @@ import { Translator } from "@unilarva/translator";
 const translator = new Translator({
   language: "fi",
   fallbackLanguage: "en",
+  additionalFallbackLanguages: ["sv"],
   missingTranslationPolicy: "key",
 });
 
@@ -114,6 +116,11 @@ if (report.issues.length > 0) {
 
 translator.translateKey("greeting", { values: { name: "Ada" } }); // "Hei Ada"
 ```
+
+Lookup tries requested and active languages, then the primary fallback and ordered additional
+fallbacks, expanding each tag to its parents before moving on. `fallbackLanguage` remains the
+primary-only setting; additional fallbacks default to `[]`. See
+[translation lookup](./USAGE.md#translation-lookup) for the full order and policy APIs.
 
 Lookup-time `values` fill `{name}` placeholders for that call; `{{name}}` renders the literal text
 `{name}`. Import-time `replacements` are a separate mechanism for literal source tokens that should
@@ -180,7 +187,8 @@ binding.dispose();
 ```
 
 The binding performs an initial update and automatically refreshes after language and effective
-catalog changes. Newly inserted markup and lookup-policy changes need `binding.update()`. Ordinary
+catalog changes. Newly inserted markup and lookup-policy changes, including either fallback setting,
+need `binding.update()` even with automatic catalog refresh enabled. Ordinary
 content markers replace all child content with text; use attribute-only markers to preserve icons or
 other application-owned children:
 

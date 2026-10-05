@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Add ordered multiple fallback languages through `TranslatorOptions.additionalFallbackLanguages`
+  (default `[]`), `setAdditionalFallbackLanguages()`, `getAdditionalFallbackLanguages()`, and
+  `getFallbackLanguages()`. Lookup expands requested, active, primary, and each additional tag to
+  parents in order with stable candidate deduplication, before optional first-stored arbitrary
+  fallback and missing policy. Frozen canonical snapshots retain primary matches within extras;
+  the combined getter uniquely lists primary then extras without parent expansion or active/requested
+  candidates. Dense string arrays are fully validated and snapshotted before assignment, with
+  `TypeError` for invalid array shapes/types and `RangeError` for invalid tags. Existing singular
+  fallback APIs remain primary-only; changing primary retains extras, and `[]` resets only extras.
+- Add independent `copyFrom()` option `additionalFallbackLanguages` (default `false`); the existing
+  `fallbackLanguage` flag copies only primary. Selected lists copy exactly regardless of catalog/registry
+  merge or replace mode and commit before active-language events. Display-name lookup uses additional
+  fallback parent chains without separately inserting active language for explicit requests. Fallback
+  changes emit no existing events and require `binding.update()` even with catalog autorefresh enabled.
+  Formatting locale, exact-active registry direction, and language controls remain independent of
+  translation fallback. Missing-log details add `additionalFallbackLanguages` only for nonempty extras,
+  preserving the old details shape otherwise.
 - Add root-exported `createTypedTranslate()` for opt-in compile-time key checking from an explicit
   string union or key-first catalog type witness. The witness is not read, validated, imported, or
   retained; envelope imports keep full runtime validation. Calls delegate with unmodified options

@@ -117,6 +117,17 @@ try {
       const preview = new Translator({ language: "fi" });
       preview.copyFrom(translator);
       assert.equal(preview.translateKey("smoke"), "Installed package");
+      const chained = new Translator({ language: "ja", additionalFallbackLanguages: ["pt_br"], fallbackToAnyLanguage: false });
+      chained.setTranslation("extra", { pt: "Additional fallback" });
+      assert.equal(chained.translateKey("extra"), "Additional fallback");
+      assert.deepEqual(chained.getFallbackLanguages(), ["en", "pt-BR"]);
+      assert.ok(Object.isFrozen(chained.getAdditionalFallbackLanguages()));
+      const copy = new Translator();
+      copy.copyFrom(chained, { additionalFallbackLanguages: true });
+      assert.equal(copy.translateKey("extra"), "Additional fallback");
+      chained.setAdditionalFallbackLanguages([]);
+      assert.equal(chained.translateKey("extra"), "");
+      assert.deepEqual(copy.getAdditionalFallbackLanguages(), ["pt-BR"]);
       assert.equal(preview.getLanguage(), "fi");
       translator.setTranslation("smoke", { en: "Source changed" });
       assert.equal(typed("smoke"), "Source changed");
@@ -161,6 +172,19 @@ try {
       // @ts-expect-error Copy modes are deliberately limited to merge and replace.
       translator.copyFrom(translator, { mode: "replace-all" });
       const text: string = translator.translateKey("greeting");
+      const fallback = new Translator({ additionalFallbackLanguages: ["pt-BR", "fi"] as const });
+      const fallbackTags: readonly string[] = fallback.getFallbackLanguages();
+      const extraTags: readonly string[] = fallback.getAdditionalFallbackLanguages();
+      fallback.setAdditionalFallbackLanguages(extraTags);
+      fallback.copyFrom(translator, { additionalFallbackLanguages: true, fallbackLanguage: false });
+      // @ts-expect-error Configuration snapshots are immutable.
+      fallbackTags.push("ar");
+      // @ts-expect-error Additional fallback configuration accepts arrays, not a single string.
+      new Translator({ additionalFallbackLanguages: "fi" });
+      // @ts-expect-error Additional fallback entries are language strings.
+      fallback.setAdditionalFallbackLanguages([1]);
+      // @ts-expect-error The new independent copy flag remains boolean.
+      fallback.copyFrom(translator, { additionalFallbackLanguages: ["fi"] });
       formatDate("2026-10-03", "en");
       const relativeOptions: RelativeTimeFormatOptions = { numeric: "auto", language: "fi" };
       const pluralOptions: PluralSelectOptions = { type: "ordinal", maximumFractionDigits: 0 };

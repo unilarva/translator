@@ -16,6 +16,33 @@ import { Translator } from "../src/index.ts";
 import { bindLanguageDetails, bindLanguageSelect, bindTranslator } from "../src/dom.ts";
 import { asElement, asParentNode } from "./dom-test-utils.ts";
 
+test("additional fallback policy requires explicit DOM refresh and does not change document locale or direction", () => {
+  const window = new Window();
+  const translator = new Translator({
+    language: "de",
+    fallbackToAnyLanguage: false,
+    additionalFallbackLanguages: ["pt"],
+  });
+  translator.addLanguage({ code: "ar", direction: "rtl" });
+  translator.setTranslation("value", { pt: "Portuguese", ar: "Arabic" });
+  window.document.body.innerHTML = '<span data-i18n="value"></span>';
+  const binding = bindTranslator(translator, asParentNode(window.document.body), {
+    updateDocumentLanguage: true,
+    updateDocumentDirection: true,
+  });
+  const element = window.document.querySelector("span")!;
+  assert.equal(element.textContent, "Portuguese");
+  translator.setAdditionalFallbackLanguages(["ar"]);
+  assert.equal(translator.translateKey("value"), "Arabic");
+  assert.equal(element.textContent, "Portuguese");
+  binding.update();
+  assert.equal(element.textContent, "Arabic");
+  assert.equal(window.document.documentElement.lang, "de");
+  assert.equal(window.document.documentElement.dir, "ltr");
+  assert.equal(translator.selectPlural(0), new Intl.PluralRules("de").select(0));
+  binding.dispose();
+});
+
 /** Creates an isolated DOM and a catalog shared by binding tests. */
 function createFixture(): { window: Window; translator: Translator } {
   const window = new Window();

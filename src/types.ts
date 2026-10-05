@@ -179,6 +179,8 @@ export interface TranslatorCopyOptions {
   activeLanguage?: boolean;
   /** Copy the fallback language. Defaults to false. */
   fallbackLanguage?: boolean;
+  /** Copy the additional fallback list independently of the primary fallback. Defaults to false. */
+  additionalFallbackLanguages?: boolean;
   /** Merge or replace each selected catalog/registry. Defaults to `merge`. */
   mode?: "merge" | "replace";
 }
@@ -276,6 +278,8 @@ export interface TranslatorOptions {
   language?: string;
   /** Lookup fallback tag, canonicalized on construction. Defaults to `en`. */
   fallbackLanguage?: string;
+  /** Extra fallback tags after the primary fallback, canonicalized and deduplicated. Defaults to []. */
+  additionalFallbackLanguages?: readonly string[];
   /** Result policy after all lookup candidates fail. Defaults to `empty`. */
   missingTranslationPolicy?: MissingTranslationPolicy;
   /** Text returned by the `text` missing policy. Defaults to `MISSING`. */

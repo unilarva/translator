@@ -65,15 +65,16 @@ Only `@unilarva/translator`, `@unilarva/translator/dom`, and the metadata subpat
 
 `new Translator()` starts with an empty translation catalog and the following configuration:
 
-| Option                     | Default                   | Purpose                                                 |
-| -------------------------- | ------------------------- | ------------------------------------------------------- |
-| `language`                 | `"en"`                    | Active lookup and formatting language.                  |
-| `fallbackLanguage`         | `"en"`                    | Fallback lookup language.                               |
-| `missingTranslationPolicy` | `"empty"`                 | Result after all lookup candidates fail.                |
-| `missingTranslationText`   | `"MISSING"`               | Text used only with the `"text"` missing policy.        |
-| `fallbackToAnyLanguage`    | `true`                    | Use the key's first stored language as a last fallback. |
-| `logger`                   | None                      | Optional structured diagnostic callback.                |
-| `fetch`                    | Global fetch when loading | Optional default fetch-compatible implementation.       |
+| Option                        | Default                   | Purpose                                                 |
+| ----------------------------- | ------------------------- | ------------------------------------------------------- |
+| `language`                    | `"en"`                    | Active lookup and formatting language.                  |
+| `fallbackLanguage`            | `"en"`                    | Primary fallback lookup language.                       |
+| `additionalFallbackLanguages` | `[]`                      | Ordered additional fallback lookup languages.           |
+| `missingTranslationPolicy`    | `"empty"`                 | Result after all lookup candidates fail.                |
+| `missingTranslationText`      | `"MISSING"`               | Text used only with the `"text"` missing policy.        |
+| `fallbackToAnyLanguage`       | `true`                    | Use the key's first stored language as a last fallback. |
+| `logger`                      | None                      | Optional structured diagnostic callback.                |
+| `fetch`                       | Global fetch when loading | Optional default fetch-compatible implementation.       |
 
 English display metadata is registered initially, even when another active language is configured.
 Use `clearLanguages()` before adding your own choices if English should not appear in the registry.
@@ -317,9 +318,10 @@ binding.update();
 
 The option affects only this binding's catalog subscription; language changes still update it,
 enabled document-direction synchronization still reacts to registry changes, and
-other catalog subscribers still receive events. `setFallbackLanguage()`,
+other catalog subscribers still receive events. `setFallbackLanguage()`, `setAdditionalFallbackLanguages()`,
 `setMissingTranslationPolicy()`, and `setMissingTranslationText()` emit neither catalog nor
-active-language events. Call `binding.update()` after changing those lookup policies. Newly inserted
+active-language or registry events. Call `binding.update()` after changing those lookup policies,
+even when automatic catalog refresh is enabled. Newly inserted
 markup likewise needs an explicit update; the package does not install a mutation observer. Use
 `setLanguage(translator.getLanguage(), { force: true })` only when all language subscribers also need
 to refresh.
@@ -328,7 +330,7 @@ to refresh.
 
 Use `copyFrom(source, options?)` to reuse an existing translator's data without linking the two
 instances. By default it merges translation values and registered language metadata, preserving the
-receiving translator's active and fallback languages:
+receiving translator's active language, primary fallback, and additional fallback list:
 
 ```ts
 const previewTranslator = new Translator({ language: "pt" });
@@ -337,13 +339,14 @@ previewTranslator.copyFrom(appTranslator);
 
 The exported `TranslatorCopyOptions` type describes the independent selections:
 
-| Option             | Default   | Meaning                                                          |
-| ------------------ | --------- | ---------------------------------------------------------------- |
-| `translations`     | `true`    | Copy all stored translation keys and language values.            |
-| `languageMetadata` | `true`    | Copy the registered language codes and display metadata.         |
-| `activeLanguage`   | `false`   | Copy the source's current active language.                       |
-| `fallbackLanguage` | `false`   | Copy the source's configured fallback language.                  |
-| `mode`             | `"merge"` | Merge or replace each selected translation catalog and registry. |
+| Option                        | Default   | Meaning                                                          |
+| ----------------------------- | --------- | ---------------------------------------------------------------- |
+| `translations`                | `true`    | Copy all stored translation keys and language values.            |
+| `languageMetadata`            | `true`    | Copy the registered language codes and display metadata.         |
+| `activeLanguage`              | `false`   | Copy the source's current active language.                       |
+| `fallbackLanguage`            | `false`   | Copy only the source's primary fallback language.                |
+| `additionalFallbackLanguages` | `false`   | Copy the source's additional fallback list exactly.              |
+| `mode`                        | `"merge"` | Merge or replace each selected translation catalog and registry. |
 
 In `merge` mode, source values overwrite matching key/language pairs while other target keys and
 values remain. Source metadata replaces the complete metadata entry for a matching language code;
@@ -351,6 +354,12 @@ other target registry entries remain. Existing language order is preserved, and 
 in source order. In `replace` mode, each selected catalog or registry becomes an exact snapshot of
 the source, including its ordering; an empty source clears that selected target store. Unselected
 categories remain unchanged in either mode.
+
+The `fallbackLanguage` and `additionalFallbackLanguages` flags are independent: copying the primary
+does not copy or clear the target's extras, and copying extras does not change the primary. Selected
+language settings are copied exactly in either mode; `mode` controls only catalog and registry
+merge/replacement, never concatenation or merging of fallback lists. An empty copied additional list
+clears extras without disabling the primary fallback.
 
 ```ts
 // Replace both data stores, but keep the preview's independently selected active language.
@@ -365,6 +374,7 @@ previewTranslator.copyFrom(appTranslator, {
   languageMetadata: false,
   activeLanguage: true,
   fallbackLanguage: true,
+  additionalFallbackLanguages: true,
 });
 ```
 
@@ -431,11 +441,52 @@ Lookup checks, in order:
 
 1. The explicitly requested language and progressively less-specific subtags.
 2. The current language and progressively less-specific subtags.
-3. The fallback language and progressively less-specific subtags.
-4. The first available value for the key when `fallbackToAnyLanguage` is enabled.
-5. The configured missing-translation policy.
+3. The primary fallback language and progressively less-specific subtags.
+4. Each additional fallback language in configured order, with its progressively less-specific
+   subtags before moving to the next additional language.
+5. The key's first stored language value when `fallbackToAnyLanguage` is enabled.
+6. The configured missing-translation policy.
 
-For example, `fi-FI` falls back to `fi`. Duplicate candidates are checked only once.
+For example, `fi-FI` falls back to `fi`. Candidate deduplication is stable across the entire chain:
+duplicate tags are checked only once, at their first position. Arbitrary fallback uses per-key stored
+language order, not the registry or fallback-list order.
+
+Configure and inspect fallback policy independently of the active language:
+
+```ts
+const translator = new Translator({
+  language: "fi-FI",
+  fallbackLanguage: "en",
+  additionalFallbackLanguages: [" sv_SE ", "en", "sv-SE", "de"],
+});
+
+translator.getFallbackLanguage(); // "en": primary only, unchanged contract.
+translator.getAdditionalFallbackLanguages(); // ["sv-SE", "en", "de"]
+translator.getFallbackLanguages(); // ["en", "sv-SE", "de"]
+translator.setFallbackLanguage("fr"); // Retains all configured extras.
+translator.getFallbackLanguages(); // ["fr", "sv-SE", "en", "de"]
+translator.setAdditionalFallbackLanguages([]); // Resets extras, not the primary.
+translator.getFallbackLanguages(); // ["fr"]
+```
+
+`TranslatorOptions.additionalFallbackLanguages?: readonly string[]` defaults to `[]`.
+`setAdditionalFallbackLanguages(languages: readonly string[])` validates the entire array before
+assigning any state, snapshots the caller's array, and emits no events. All entries use the same strict
+BCP 47 normalization as other configured language tags: trim whitespace, replace underscores with
+hyphens, and canonicalize. Non-array input, non-string entries, and sparse arrays throw `TypeError`;
+invalid string tags throw `RangeError`. A failed setter leaves the previous list unchanged.
+
+`getAdditionalFallbackLanguages(): readonly string[]` returns a frozen canonical snapshot with stable
+deduplication **within the additional list only**. A match with the primary is retained so it remains
+an additional fallback if the primary later changes. `getFallbackLanguages(): readonly string[]`
+returns a frozen detached unique list with the primary first, followed by the extras. Neither getter
+expands parent tags or includes the active or requested language merely because it is active/requested.
+Previously returned snapshots are unaffected by later changes.
+
+The existing `fallbackLanguage` constructor default (`"en"`), getter, and setter remain primary-only;
+`setFallbackLanguage()` retains extras. Both fallback setters are lookup-policy changes and emit no
+active-language, catalog, or registry events. Call `binding.update()` to refresh translated DOM after
+changing either, even if the binding automatically refreshes on catalog changes.
 
 `fallbackToAnyLanguage` defaults to `true`, because an available translation is often preferable
 to no translation. Disable it when missing values must remain visible:
@@ -570,6 +621,14 @@ translator.addLanguage({
 
 translator.getLanguageDisplayName("fi"); // "Suomi"
 ```
+
+`getLanguageDisplayName(language?)` checks the requested tag and its parents (defaulting to the active
+tag when omitted), then the primary fallback and its parents, then each additional fallback and its
+parents. An explicit request does **not** separately insert the active language. The original
+display-name semantics remain: return the first registered candidate's nonempty native name, English
+name, or canonical code; if no candidate is registered, return the canonical requested tag. Invalid
+input throws only if no registered candidate was found. This registry lookup does not use arbitrary
+catalog fallback.
 
 `LanguageInfo` extends `LanguageMetadata` with a canonical `code`. Both `addLanguage()` and bundle
 `languages` entries accept optional `direction?: "ltr" | "rtl"` metadata, for example
@@ -758,7 +817,8 @@ the core declarations.
 ## Locale Formatting
 
 The DOM-free entry provides strict `Intl`-backed formatting. Translator methods use the active
-language unless an option overrides it:
+language unless an option overrides it; neither primary nor additional translation fallbacks select
+the formatter locale:
 
 ```ts
 translator.formatNumber(1234.5);
@@ -905,6 +965,9 @@ or replace the translator logger later with `setLogger()`.
 Log entries and their array/plain-record detail containers are detached and deeply frozen. Opaque
 objects, including the optional original `error`, retain their identity and are not copied or frozen.
 
+Missing-translation diagnostics include `additionalFallbackLanguages` in their details only when
+the configured additional list is nonempty. With no extras, existing diagnostic details are unchanged.
+
 Logger callbacks run synchronously. Returned promises are not awaited; their rejections are silently
 ignored like synchronous logger exceptions, without recursive diagnostics or unhandled rejections.
 
@@ -936,6 +999,9 @@ refresh with `update()`, without disabling automatic language updates.
 `update(root)` includes the supplied root element and its descendants. `updateElement(element)`
 updates only that element. `dispose()` removes its language and optional catalog and registry
 subscriptions; it does not remove translated text.
+
+Fallback-policy changes emit no existing change events. After changing the primary or additional
+fallbacks, call `binding.update()` even when `updateOnCatalogChange` is enabled.
 
 `updateDocumentDirection` defaults to `false`, independently of `updateDocumentLanguage`. When
 enabled, it writes the owning document's `html.dir` using the exact active canonical language's
@@ -1033,6 +1099,9 @@ subscriptions and the DOM listener without altering the select.
 
 Both language-control factories accept an optional `logger` for diagnostics such as ignored invalid
 choice tags or malformed choice elements. Logger failures remain isolated.
+
+Language controls follow the active language and registry, not the translation fallback chain;
+configuring additional fallbacks neither adds choices nor changes the selected language.
 
 ### Details Language Dropdown
 

@@ -43,7 +43,6 @@ This document is for package maintainers. Consumer setup and behavior belong in
   - [Catalog Generation And Extraction](#catalog-generation-and-extraction)
   - [Intl Formatting Parts And Ranges](#intl-formatting-parts-and-ranges)
   - [Framework Adapters](#framework-adapters)
-  - [Multiple Fallback Languages](#multiple-fallback-languages)
   - [Rich Grammar And Asynchronous Rendering](#rich-grammar-and-asynchronous-rendering)
 - [Distribution And Release](#distribution-and-release)
   - [CI And Trusted Publishing](#ci-and-trusted-publishing)
@@ -102,7 +101,7 @@ Owns the `Translator` state machine, `normalizeLanguageTag()`, and the root-expo
 - private translation and independently observable language-registry maps;
 - bundle parsing, validation, replacement, and import reporting;
 - selective one-time state copying between translator instances;
-- BCP 47 normalization and lookup chains;
+- BCP 47 normalization, primary and ordered additional fallback policy, and lookup chains;
 - interpolation and missing-value policy;
 - independent language and catalog subscriptions and failure isolation;
 - formatter instance methods;
@@ -220,9 +219,24 @@ for aborted imports.
 
 ### Deterministic Language Resolution
 
-Language tags are canonical BCP 47 tags. Lookup order is requested language, current language,
-fallback language, optional first-available value, then missing policy. Each language contributes
-progressively less-specific subtags. Changes to this order are consumer-visible behavior.
+Language tags are canonical BCP 47 tags, normalized by trimming, underscore-to-hyphen conversion,
+and strict canonicalization. Lookup order is requested language, active language, primary fallback,
+each ordered additional fallback, optional first-stored arbitrary value, then missing policy. Each
+tag contributes its parent chain before the next tag; candidate deduplication is stable across the
+whole chain. Changes to this order are consumer-visible behavior.
+
+Keep `fallbackLanguage`'s `"en"` default and getter/setter primary-only. The additional list defaults
+to `[]`; changing the primary retains extras, and clearing extras never disables the primary.
+Validate the entire dense string array before assignment: non-array, non-string, or sparse input
+throws `TypeError`, invalid tags throw `RangeError`, and failed updates leave state intact. Deduplicate
+canonically within extras only, retaining primary matches for later primary changes.
+
+Display-name resolution checks requested/default-active tag and parents, then primary and additional
+fallback parent chains. Never separately prepend active language for an explicit request or use
+arbitrary catalog fallback. Retain the first registered candidate's native-name/English-name/code
+semantics and canonical requested-tag result when no metadata matches. Formatting locales remain
+active/explicit, not fallback-driven; direction and language controls remain exact-active/registry
+concerns.
 
 ### Inert Built-In DOM Rendering
 
@@ -250,9 +264,16 @@ Do not expose mutable internal maps. `getTranslationData()` returns a detached s
 `getLanguages()` returns an immutable detached array of immutable metadata. Likewise, imports should
 not retain caller-owned nested records.
 
+Snapshot caller fallback arrays. `getAdditionalFallbackLanguages()` exposes frozen canonical extras;
+`getFallbackLanguages()` exposes a frozen detached unique primary-then-extras list, without parent
+expansion or active/requested candidates. Neither snapshot changes after subsequent policy updates.
+
 `copyFrom()` stages already validated source values into detached maps and immutable metadata,
 without round-tripping strings through bundle import, replacements, or interpolation. Selected
 stores use explicit merge/replacement semantics; language settings are independent opt-in copies.
+The `fallbackLanguage` and `additionalFallbackLanguages` copy flags default to false and independently
+select primary and extras. Copy selected lists exactly regardless of `mode`; only catalog and registry
+stores merge or replace. Commit the selected fallback chain before active-language events.
 Do not transfer runtime configuration, subscriptions, or DOM bindings, or introduce a live connection
 between instances.
 
@@ -264,7 +285,7 @@ only when effective stored content changes after import, copy, set, or clear; no
 are silent. Reentrant mutations coalesce into a
 final current-revision event, and callback failures must not block other subscribers. Language,
 registry, and lookup-policy changes are separate concerns; policy setters do not emit catalog or
-active-language events.
+active-language or registry events, including both fallback setters.
 Compare per-key language order as well as values because first-available fallback observes it;
 top-level key ordering does not affect lookup and alone is not a content change.
 Catalog callbacks run after both catalog and registry state commit. If a callback mutates and
@@ -305,7 +326,8 @@ import-time literal replacements. Interpolation runs on string data and never re
 content as rich-text tokens. The parser recognizes only `{name}` with the documented name grammar;
 doubled braces emit literal braces without recursively interpreting their contents.
 
-The active/fallback candidate chain is rebuilt when either configured language changes and reused
+The active/fallback candidate chain is rebuilt when the active language, primary fallback, or
+additional list changes and reused
 for ordinary lookups. Requested per-call language overrides prepend their own chain without changing
 the deterministic resolution order. `interpolate: false` returns the resolved source without brace
 decoding or value insertion, allowing the rich parser to recognize tokens before one interpolation
@@ -418,6 +440,9 @@ array/plain-record detail containers through the safe adapter; opaque objects an
 reference are deliberately retained.
 Logger failures are ignored. Language, catalog, and registry subscribers and DOM extensions are
 isolated so one consumer callback cannot prevent later callbacks or elements from updating.
+
+Missing-translation log details include canonical `additionalFallbackLanguages` only for nonempty
+extras. Preserve the previous details shape when extras are absent.
 
 Translator relative-time and plural-selection methods log `relative-time-format-failed` and
 `plural-select-failed`, respectively, with the original error, then rethrow that same error.
@@ -557,13 +582,6 @@ Framework integration may need a versioned, referentially stable snapshot API fo
 subscriptions. Add that API when an adapter needs it; do not silently change the detached snapshot
 ownership of `getTranslationData()` or `getLanguages()`. Keep framework-specific lifecycle and
 dependencies in adapters rather than the core or ordinary DOM binding.
-
-### Multiple Fallback Languages
-
-A new explicit option and enumeration API could support ordered fallback chains. Preserve the
-existing singular fallback getter's meaning and define how the chain interacts with requested,
-active, and first-available languages. Replacing the singular contract would be a compatibility
-change, but an additive chain API can preserve the existing consumer contract.
 
 ### Rich Grammar And Asynchronous Rendering
 

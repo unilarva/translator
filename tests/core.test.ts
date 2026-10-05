@@ -27,6 +27,300 @@ import type {
   TranslatorLogEntry,
 } from "../src/types.ts";
 
+test("additional fallbacks expand each tag in order after requested, active, and primary chains", () => {
+  const translator = new Translator({
+    language: "de-AT",
+    fallbackLanguage: "en-GB",
+    additionalFallbackLanguages: ["pt-BR", "en", "es-AR"],
+    fallbackToAnyLanguage: false,
+    missingTranslationPolicy: "key",
+  });
+  const chain = ["fr-CA", "fr", "de-AT", "de", "en-GB", "en", "pt-BR", "pt", "es-AR", "es"];
+  for (let index = 0; index < chain.length; index++) {
+    translator.setTranslation(
+      "order",
+      Object.fromEntries(chain.slice(index).map(tag => [tag, tag])),
+    );
+    assert.equal(translator.translateKey("order", { language: "fr-CA" }), chain[index]);
+  }
+  translator.setTranslation("order", { pt: "Portuguese", es: "Spanish" });
+  assert.equal(translator.translateKey("order", { language: "invalid!" }), "Portuguese");
+  translator.setAdditionalFallbackLanguages(["es-AR", "pt-BR"]);
+  assert.equal(translator.translateKey("order"), "Spanish");
+  translator.setFallbackLanguage("pt-PT");
+  assert.equal(translator.translateKey("order"), "Portuguese");
+  translator.setLanguage("es-MX");
+  assert.equal(translator.translateKey("order"), "Spanish");
+  translator.setLanguage("ja");
+  translator.setFallbackLanguage("en");
+  translator.setAdditionalFallbackLanguages([]);
+  assert.equal(translator.translateKey("order"), "order");
+});
+
+test("additional fallback snapshots canonicalize, deduplicate, and preserve independent primary configuration", () => {
+  const input = [" pt_br ", "PT-BR", "en_gb", "es"];
+  const translator = new Translator({
+    fallbackLanguage: "en-GB",
+    additionalFallbackLanguages: input,
+  });
+  input.reverse();
+  input.push("fi");
+  const additional = translator.getAdditionalFallbackLanguages();
+  const effective = translator.getFallbackLanguages();
+  assert.deepEqual(additional, ["pt-BR", "en-GB", "es"]);
+  assert.deepEqual(effective, ["en-GB", "pt-BR", "es"]);
+  assert.ok(Object.isFrozen(additional));
+  assert.ok(Object.isFrozen(effective));
+  assert.throws(() => (additional as string[]).push("fi"), TypeError);
+  translator.setFallbackLanguage("fi");
+  assert.equal(translator.getFallbackLanguage(), "fi");
+  assert.deepEqual(translator.getFallbackLanguages(), ["fi", "pt-BR", "en-GB", "es"]);
+  assert.deepEqual(effective, ["en-GB", "pt-BR", "es"]);
+  const setterInput = [" de_at ", "de-AT"];
+  translator.setAdditionalFallbackLanguages(setterInput);
+  setterInput[0] = "ar";
+  assert.deepEqual(translator.getAdditionalFallbackLanguages(), ["de-AT"]);
+  assert.deepEqual(additional, ["pt-BR", "en-GB", "es"]);
+  translator.setAdditionalFallbackLanguages(runInNewContext('["pt_br", "pt-BR"]'));
+  assert.deepEqual(translator.getAdditionalFallbackLanguages(), ["pt-BR"]);
+  const defaults = new Translator();
+  assert.deepEqual(defaults.getAdditionalFallbackLanguages(), []);
+  assert.deepEqual(defaults.getFallbackLanguages(), ["en"]);
+});
+
+test("invalid additional chains are rejected before mutation, notification, or lookup changes", () => {
+  const translator = new Translator({ additionalFallbackLanguages: ["fi"] });
+  translator.setTranslation("value", { fi: "Retained" });
+  let events = 0;
+  translator.subscribe(() => events++);
+  translator.subscribeCatalog(() => events++);
+  translator.subscribeLanguages(() => events++);
+  const sparse = new Array(2);
+  sparse[1] = "fi";
+  const invalid: [unknown, typeof TypeError | typeof RangeError][] = [
+    [null, TypeError],
+    [undefined, TypeError],
+    ["fi", TypeError],
+    [{ 0: "fi", length: 1 }, TypeError],
+    [["ar", 1], TypeError],
+    [["ar", null], TypeError],
+    [["ar", new String("fi")], TypeError],
+    [sparse, TypeError],
+    [["ar", ""], RangeError],
+    [["ar", "invalid!"], RangeError],
+  ];
+  for (const [languages, error] of invalid) {
+    assert.throws(() => translator.setAdditionalFallbackLanguages(languages as string[]), error);
+    if (languages !== undefined)
+      assert.throws(
+        () => new Translator({ additionalFallbackLanguages: languages as string[] }),
+        error,
+      );
+    assert.deepEqual(translator.getAdditionalFallbackLanguages(), ["fi"]);
+    assert.equal(translator.translateKey("value"), "Retained");
+  }
+  translator.setAdditionalFallbackLanguages(["ar"]);
+  translator.setAdditionalFallbackLanguages([]);
+  translator.setFallbackLanguage("de");
+  assert.equal(events, 0);
+});
+
+test("additional fallback values precede arbitrary languages and retain empty-string and missing policies", () => {
+  const translator = new Translator({ language: "ja", additionalFallbackLanguages: ["pt-BR"] });
+  translator.setTranslation("value", { zh: "Arbitrary", pt: "Preferred" });
+  assert.equal(translator.translateKey("value"), "Preferred");
+  translator.setTranslation("value", { zh: "Arbitrary", pt: "" });
+  assert.equal(translator.translateKey("value"), "");
+  translator.setAdditionalFallbackLanguages([]);
+  assert.equal(translator.translateKey("value"), "Arbitrary");
+  const strict = new Translator({
+    language: "ja",
+    additionalFallbackLanguages: ["pt-BR"],
+    fallbackToAnyLanguage: false,
+    missingTranslationPolicy: "throw",
+  });
+  strict.setTranslation("value", { zh: "Arbitrary" });
+  assert.throws(() => strict.translateKey("value"), /Missing translation/);
+});
+
+test("display-name fallback uses the requested and configured chains without an unrelated active language", () => {
+  const translator = new Translator({
+    language: "de",
+    fallbackLanguage: "en-GB",
+    additionalFallbackLanguages: ["pt-BR", "es-AR"],
+  });
+  translator.removeLanguage("en");
+  translator.addLanguage({ code: "de", nativeName: "Active" });
+  translator.addLanguage({ code: "pt", nativeName: "Portuguese" });
+  translator.addLanguage({ code: "es", nativeName: "Spanish" });
+  assert.equal(translator.getLanguageDisplayName(), "Active");
+  assert.equal(translator.getLanguageDisplayName("fr-CA"), "Portuguese");
+  translator.addLanguage({ code: "fr", nativeName: "Requested" });
+  assert.equal(translator.getLanguageDisplayName("fr-CA"), "Requested");
+  translator.addLanguage({ code: "en", nativeName: "Primary" });
+  assert.equal(translator.getLanguageDisplayName("ar"), "Primary");
+  translator.removeLanguage("en");
+  translator.setAdditionalFallbackLanguages(["es-AR", "pt-BR"]);
+  assert.equal(translator.getLanguageDisplayName("ar"), "Spanish");
+});
+
+test("copying additional fallback configuration is independent, exact, detached, and committed before events", () => {
+  const source = new Translator({
+    language: "ja",
+    fallbackLanguage: "en-GB",
+    additionalFallbackLanguages: ["pt-BR", "es"],
+  });
+  source.setTranslation("value", { pt: "Copied" });
+  const target = new Translator({
+    language: "fi",
+    fallbackLanguage: "de",
+    additionalFallbackLanguages: ["ar"],
+  });
+  target.copyFrom(source);
+  assert.deepEqual(target.getAdditionalFallbackLanguages(), ["ar"]);
+  target.copyFrom(source, { translations: false, languageMetadata: false, fallbackLanguage: true });
+  assert.equal(target.getFallbackLanguage(), "en-GB");
+  assert.deepEqual(target.getAdditionalFallbackLanguages(), ["ar"]);
+  target.setFallbackLanguage("de");
+  let events = 0;
+  target.subscribe(() => {
+    events++;
+    assert.deepEqual(target.getFallbackLanguages(), ["de", "pt-BR", "es"]);
+    assert.equal(target.translateKey("value"), "Copied");
+  });
+  target.copyFrom(source, {
+    additionalFallbackLanguages: true,
+    activeLanguage: true,
+    mode: "replace",
+  });
+  assert.equal(events, 1);
+  assert.equal(target.getFallbackLanguage(), "de");
+  source.setAdditionalFallbackLanguages(["ar"]);
+  assert.deepEqual(target.getAdditionalFallbackLanguages(), ["pt-BR", "es"]);
+  target.copyFrom(new Translator(), {
+    translations: false,
+    languageMetadata: false,
+    additionalFallbackLanguages: true,
+  });
+  assert.deepEqual(target.getAdditionalFallbackLanguages(), []);
+  assert.throws(
+    () => target.copyFrom(source, { additionalFallbackLanguages: "yes" as unknown as boolean }),
+    TypeError,
+  );
+  assert.deepEqual(target.getAdditionalFallbackLanguages(), []);
+});
+
+test("missing diagnostics include additional configuration only when present, as an immutable snapshot", () => {
+  const entries: TranslatorLogEntry[] = [];
+  const translator = new Translator({ logger: entry => entries.push(entry) });
+  translator.translateKey("missing");
+  assert.deepEqual(entries.at(-1)?.details, {
+    key: "missing",
+    language: "en",
+    fallbackLanguage: "en",
+  });
+  translator.setAdditionalFallbackLanguages(["pt_br"]);
+  translator.translateKey("missing");
+  const details = entries.at(-1)!.details!;
+  assert.deepEqual(details.additionalFallbackLanguages, ["pt-BR"]);
+  assert.ok(Object.isFrozen(details.additionalFallbackLanguages));
+  translator.setAdditionalFallbackLanguages(["fi"]);
+  assert.deepEqual(details.additionalFallbackLanguages, ["pt-BR"]);
+});
+
+test("copied extras commit before catalog/registry callbacks and preserve reentrant callback writes", () => {
+  const source = new Translator({ additionalFallbackLanguages: ["pt"] });
+  source.setTranslation("value", { pt: "Copied", es: "Callback preference" });
+  source.addLanguage({ code: "pt", nativeName: "Portuguese" });
+  const target = new Translator({ fallbackToAnyLanguage: false });
+  const order: string[] = [];
+  target.subscribeCatalog(() => {
+    order.push("catalog");
+    assert.deepEqual(target.getAdditionalFallbackLanguages(), ["pt"]);
+    assert.equal(target.translateKey("value"), "Copied");
+    target.setAdditionalFallbackLanguages(["es"]);
+  });
+  target.subscribeLanguages(() => {
+    order.push("registry");
+    assert.deepEqual(target.getAdditionalFallbackLanguages(), ["es"]);
+    assert.equal(target.translateKey("value"), "Callback preference");
+  });
+  target.copyFrom(source, { additionalFallbackLanguages: true });
+  assert.deepEqual(order, ["catalog", "registry"]);
+  assert.deepEqual(target.getAdditionalFallbackLanguages(), ["es"]);
+});
+
+test("reentrant active-language copies commit extras without changing the current queued language", () => {
+  const source = new Translator({ language: "fi", additionalFallbackLanguages: ["pt"] });
+  const target = new Translator({ language: "en" });
+  const seen: string[] = [];
+  target.subscribe(event => {
+    seen.push(event.language);
+    assert.equal(target.getLanguage(), event.language);
+    if (event.language === "de") {
+      target.copyFrom(source, {
+        translations: false,
+        languageMetadata: false,
+        additionalFallbackLanguages: true,
+        activeLanguage: true,
+      });
+      assert.equal(target.getLanguage(), "de");
+      assert.deepEqual(target.getAdditionalFallbackLanguages(), ["pt"]);
+      target.setLanguage("ar");
+    }
+  });
+  target.setLanguage("de");
+  assert.deepEqual(seen, ["de", "fi", "ar"]);
+  assert.deepEqual(target.getAdditionalFallbackLanguages(), ["pt"]);
+});
+
+test("file loads never restore stale extras after in-flight changes, failures, or cancellation", async () => {
+  for (const outcome of ["success", "failure", "abort"]) {
+    const translator = new Translator({
+      additionalFallbackLanguages: ["pt"],
+      fallbackToAnyLanguage: false,
+    });
+    translator.setTranslation("value", { fi: "Existing" });
+    const controller = new AbortController();
+    const error = new Error(outcome);
+    let release!: () => void;
+    const wait = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const pending = translator.loadTranslationFiles(["catalog.json"], {
+      signal: controller.signal,
+      fetch: async () => {
+        await wait;
+        if (outcome === "failure") throw error;
+        return {
+          json: async () => ({
+            "translator-i18n": { "language-data": { fi: { value: "Loaded" } } },
+          }),
+        };
+      },
+    });
+    translator.setAdditionalFallbackLanguages(["fi"]);
+    if (outcome === "abort") controller.abort(error);
+    release();
+    if (outcome === "success") await pending;
+    else await assert.rejects(pending, thrown => thrown === error);
+    assert.deepEqual(translator.getFallbackLanguages(), ["en", "fi"]);
+    assert.equal(translator.translateKey("value"), outcome === "success" ? "Loaded" : "Existing");
+  }
+});
+
+test("file transactions retain fallback policy and typed lookup uses the live additional chain", async () => {
+  const translator = new Translator({ additionalFallbackLanguages: ["pt-BR"] });
+  const typed = createTypedTranslate<"value">(translator);
+  await translator.loadTranslationFiles(["catalog.json"], {
+    fetch: async () => ({
+      json: async () => ({ "translator-i18n": { "language-data": { pt: { value: "Loaded" } } } }),
+    }),
+  });
+  assert.deepEqual(translator.getFallbackLanguages(), ["en", "pt-BR"]);
+  assert.equal(typed("value"), "Loaded");
+});
+
 test("typed lookup delegates to live state without importing or retaining its type witness", () => {
   const translator = new Translator({
     language: "fi",

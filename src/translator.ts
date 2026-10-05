@@ -60,6 +60,21 @@ const MULTILINGUAL_DATA_KEY = "multilingual-data";
 const LANGUAGE_DATA_KEY = "language-data";
 const LANGUAGES_KEY = "languages";
 
+/** Validates the complete additional chain before returning an immutable canonical snapshot. */
+function normalizeAdditionalFallbackLanguages(languages: readonly string[]): readonly string[] {
+  if (!Array.isArray(languages)) {
+    throw new TypeError("Translator: additional fallback languages must be an array");
+  }
+  const canonical = new Set<string>();
+  for (let index = 0; index < languages.length; index++) {
+    if (!Object.hasOwn(languages, index)) {
+      throw new TypeError("Translator: additional fallback languages must not be sparse");
+    }
+    canonical.add(normalizeLanguageTag(languages[index]));
+  }
+  return Object.freeze([...canonical]);
+}
+
 /**
  * Creates a live lookup function restricted to an explicit application-owned key union.
  * Type checking does not guarantee that a key exists in the translator's current catalog.
@@ -273,6 +288,7 @@ export class Translator {
   #catalogChangePending = false;
   #language: string;
   #fallbackLanguage: string;
+  #additionalFallbackLanguages: readonly string[];
   #missingTranslationPolicy: MissingTranslationPolicy;
   #missingTranslationText: string;
   #fallbackToAnyLanguage: boolean;
@@ -284,7 +300,7 @@ export class Translator {
    * Creates an empty catalog and registers English display metadata without browser globals.
    *
    * @param options - Configuration; active/fallback tags default to `en`, missing policy to
-   * `empty`, missing text to `MISSING`, and arbitrary-language fallback to true.
+   * `empty`, missing text to `MISSING`, arbitrary-language fallback to true, and additional fallbacks to [].
    * @throws TypeError for invalid configuration types or an unsupported missing policy.
    * @throws RangeError for empty or syntactically invalid language tags.
    */
@@ -294,6 +310,9 @@ export class Translator {
     this.#language = normalizeLanguageTag(options.language === undefined ? "en" : options.language);
     this.#fallbackLanguage = normalizeLanguageTag(
       options.fallbackLanguage === undefined ? "en" : options.fallbackLanguage,
+    );
+    this.#additionalFallbackLanguages = normalizeAdditionalFallbackLanguages(
+      options.additionalFallbackLanguages === undefined ? [] : options.additionalFallbackLanguages,
     );
     this.#missingTranslationPolicy =
       options.missingTranslationPolicy === undefined ? "empty" : options.missingTranslationPolicy;
@@ -383,7 +402,7 @@ export class Translator {
 
   /**
    * Returns the configured canonical fallback language.
-   * @returns Fallback tag used after requested and active language candidates.
+   * @returns Primary fallback tag used after requested and active candidates, before additional fallbacks.
    */
   public getFallbackLanguage(): string {
     return this.#fallbackLanguage;
@@ -391,12 +410,41 @@ export class Translator {
 
   /**
    * Sets the language used after requested and active language lookup fail, without emitting events.
-   * @param language - Fallback tag to canonicalize.
+   * @param language - Primary fallback tag to canonicalize; additional fallback configuration is retained.
    * @throws TypeError for a non-string tag; RangeError for an empty or invalid tag.
    */
   public setFallbackLanguage(language: string): void {
     this.#fallbackLanguage = normalizeLanguageTag(language);
     this.#refreshDefaultLanguageCandidates();
+  }
+
+  /**
+   * Returns the immutable configured additional tags, in priority order without parent expansion.
+   * @returns Detached canonical list; duplicates within the list are removed, not primary-tag matches.
+   */
+  public getAdditionalFallbackLanguages(): readonly string[] {
+    return this.#additionalFallbackLanguages;
+  }
+
+  /**
+   * Replaces the additional chain atomically, without emitting language, catalog, or registry events.
+   * @param languages - Extra tags after the primary fallback; an empty array restores singular fallback.
+   * @returns Nothing; explicit DOM refresh is needed after changes, as with the primary setter.
+   * @throws TypeError for non-arrays, sparse arrays, or non-string entries; RangeError for invalid tags.
+   */
+  public setAdditionalFallbackLanguages(languages: readonly string[]): void {
+    this.#additionalFallbackLanguages = normalizeAdditionalFallbackLanguages(languages);
+    this.#refreshDefaultLanguageCandidates();
+  }
+
+  /**
+   * Enumerates the primary and additional fallback tags, deduplicated in first-occurrence order.
+   * @returns Immutable detached configuration snapshot, without active/requested tags or parent expansion.
+   */
+  public getFallbackLanguages(): readonly string[] {
+    return Object.freeze([
+      ...new Set([this.#fallbackLanguage, ...this.#additionalFallbackLanguages]),
+    ]);
   }
 
   /**
@@ -479,6 +527,7 @@ export class Translator {
     for (const candidate of [
       ...languageLookupChain(language),
       ...languageLookupChain(this.#fallbackLanguage),
+      ...this.#additionalFallbackLanguages.flatMap(canonicalLanguageLookupChain),
     ]) {
       const info = this.#languages.get(candidate);
       if (info) return info.nativeName || info.englishName || info.code;
@@ -904,9 +953,9 @@ export class Translator {
 
   /**
    * Copies selected state once, without sharing mutable data, listeners, logger, fetch, or policies.
-   * Commits selected catalogs/metadata and fallback before active-language notification.
+   * Commits selected catalogs/metadata and fallback configuration before active-language notification.
    * @param source - Translator whose state is snapshotted; later source changes are not followed.
-   * @param options - Copies catalogs/metadata by default, not active/fallback tags; defaults to merge.
+   * @param options - Copies catalogs/metadata by default, not active/fallback settings; defaults to merge.
    * @throws TypeError for a non-Translator source, invalid options, flags, or mode.
    */
   public copyFrom(source: Translator, options: TranslatorCopyOptions = {}): void {
@@ -919,6 +968,7 @@ export class Translator {
       languageMetadata = true,
       activeLanguage = false,
       fallbackLanguage = false,
+      additionalFallbackLanguages = false,
       mode = "merge",
     } = options;
     for (const [name, value] of Object.entries({
@@ -926,6 +976,7 @@ export class Translator {
       languageMetadata,
       activeLanguage,
       fallbackLanguage,
+      additionalFallbackLanguages,
     })) {
       if (typeof value !== "boolean") {
         throw new TypeError(`Translator: copy option ${name} must be a boolean`);
@@ -964,6 +1015,7 @@ export class Translator {
       languageMetadata && !this.#sameLanguages(this.getLanguages(), [...languages.values()]);
     const language = source.#language;
     const fallback = source.#fallbackLanguage;
+    const additionalFallbacks = source.#additionalFallbackLanguages;
 
     // Commit both stores and fallback before active-language subscribers can observe the copy.
     if (translations) {
@@ -975,6 +1027,7 @@ export class Translator {
       for (const [code, info] of languages) this.#languages.set(code, info);
     }
     if (fallbackLanguage) this.setFallbackLanguage(fallback);
+    if (additionalFallbackLanguages) this.setAdditionalFallbackLanguages(additionalFallbacks);
     const catalogRevision = this.#catalogRevision;
     const registryRevision = this.#languageRegistryRevision;
     if (activeLanguage) this.setLanguage(language);
@@ -993,7 +1046,7 @@ export class Translator {
   }
 
   /**
-   * Resolves requested, active, then fallback tags, truncating each one subtag at a time.
+   * Resolves requested, active, primary fallback, then additional tags, truncating each tag in turn.
    * If enabled, arbitrary fallback uses the key's first stored language. Empty stored strings
    * count as translations; missing-policy output is not interpolated.
    * @param key - Translation key; an empty key returns empty text without missing diagnostics.
@@ -1263,7 +1316,14 @@ export class Translator {
       "translator",
       "missing-translation",
       `Missing translation: ${key}`,
-      { key, language: this.#language, fallbackLanguage: this.#fallbackLanguage },
+      {
+        key,
+        language: this.#language,
+        fallbackLanguage: this.#fallbackLanguage,
+        ...(this.#additionalFallbackLanguages.length > 0
+          ? { additionalFallbackLanguages: this.#additionalFallbackLanguages }
+          : {}),
+      },
     );
     switch (this.#missingTranslationPolicy) {
       case "key":
@@ -1287,13 +1347,14 @@ export class Translator {
     return [...candidates];
   }
 
-  /** Rebuilds the deduplicated active/fallback lookup chain after either tag changes. */
+  /** Rebuilds the deduplicated lookup chain after active or fallback configuration changes. */
   #refreshDefaultLanguageCandidates(): void {
     // Active and fallback tags are already canonical, and change far less often than lookups occur.
     this.#defaultLanguageCandidates = [
       ...new Set([
         ...canonicalLanguageLookupChain(this.#language),
         ...canonicalLanguageLookupChain(this.#fallbackLanguage),
+        ...this.#additionalFallbackLanguages.flatMap(canonicalLanguageLookupChain),
       ]),
     ];
   }

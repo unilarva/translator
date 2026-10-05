@@ -46,6 +46,9 @@ servers, workers, and command-line tools; browser integration is isolated in
   isolated from unrelated updates.
 - **TypeScript-first ESM.** Public declarations, detached translation snapshots, an encapsulated
   exports map, and a side-effect-free package support modern bundlers and tree shaking.
+- **Opt-in typed keys.** [`createTypedTranslate()`](./USAGE.md#typed-keys) checks a wrapper's keys
+  against a literal key-first catalog or explicit string union, without changing runtime imports
+  or the dynamic `Translator` API.
 
 > **Pre-1.0 status:** Public APIs and bundle contracts can change between minor releases. Pin the
 > version and review the [changelog](./CHANGELOG.md) before upgrading.

@@ -52,6 +52,10 @@ const fragmentSnippet = [...usage.matchAll(/```ts\n([\s\S]*?)\n```/g)].find(([, 
   source.includes("template.content.cloneNode(true)"),
 )?.[1];
 assert.ok(fragmentSnippet, "The cloned-template usage snippet is required");
+const typedSnippet = [...usage.matchAll(/```ts\n([\s\S]*?)\n```/g)].find(([, source]) =>
+  source.includes("const translate = createTypedTranslate(translator, catalog)"),
+)?.[1];
+assert.ok(typedSnippet, "The inferred typed-key usage snippet is required");
 const temporary = mkdtempSync(join(tmpdir(), "translator-dist-"));
 const npmCommand = process.env.npm_execpath ? process.execPath : "npm";
 const npmPrefix = process.env.npm_execpath ? [process.env.npm_execpath] : [];
@@ -94,7 +98,7 @@ try {
       "--eval",
       `
       import assert from "node:assert/strict";
-      import { Translator, formatRelativeTime, selectPlural } from "@unilarva/translator";
+      import { createTypedTranslate, Translator, formatRelativeTime, selectPlural } from "@unilarva/translator";
       import { bindTranslator, bindLanguageSelect, bindLanguageDetails } from "@unilarva/translator/dom";
       const translator = new Translator({ language: "en" });
       assert.equal(formatRelativeTime(-1, "day", "en", { numeric: "auto" }), "yesterday");
@@ -105,6 +109,8 @@ try {
       const unsubscribeCatalog = translator.subscribeCatalog(event => catalogEvents.push(event));
       translator.setTranslation("smoke", { en: "Installed package" });
       assert.equal(translator.translateKey("smoke"), "Installed package");
+      const typed = createTypedTranslate(translator, { smoke: { en: "Type witness only" } });
+      assert.equal(typed("smoke"), "Installed package");
       assert.deepEqual(catalogEvents, [{ revision: 1 }]);
       assert.ok(Object.isFrozen(catalogEvents[0]));
       unsubscribeCatalog();
@@ -113,6 +119,7 @@ try {
       assert.equal(preview.translateKey("smoke"), "Installed package");
       assert.equal(preview.getLanguage(), "fi");
       translator.setTranslation("smoke", { en: "Source changed" });
+      assert.equal(typed("smoke"), "Source changed");
       assert.equal(preview.translateKey("smoke"), "Installed package");
       for (const binding of [bindTranslator, bindLanguageSelect, bindLanguageDetails]) {
         assert.equal(typeof binding, "function");
@@ -171,6 +178,72 @@ try {
       translator.setTranslation("greeting", {});
       unsubscribeCatalog();
     `,
+    ],
+    [
+      "typed-lookup",
+      ["ES2022"],
+      `
+      import { createTypedTranslate, Translator, type MultilingualData, type TranslateOptions } from "@unilarva/translator";
+      const translator = new Translator();
+      const catalog = {
+        greeting: { en: "Hello {name}", fi: "Hei {name}" },
+        goodbye: { en: ["Good", "bye"] },
+      } as const satisfies MultilingualData;
+      translator.importTranslations({ "translator-i18n": { "multilingual-data": catalog } });
+      const t = createTypedTranslate(translator, catalog);
+      const options: TranslateOptions = { language: "fi", interpolate: true, values: { name: "Ada" } };
+      const text: string = t("greeting", options);
+      const same: (key: "greeting" | "goodbye", options?: TranslateOptions) => string = t;
+      t("goodbye");
+      // @ts-expect-error Inference restricts keys, including when options are supplied.
+      t("greting", options);
+      const dynamic: string = "greeting";
+      // @ts-expect-error Arbitrary string variables need narrowing at the consumer boundary.
+      t(dynamic);
+      // @ts-expect-error Numeric input is not a translation key.
+      t(1);
+      // @ts-expect-error The wrapper preserves the ordinary lookup-option types.
+      t("greeting", { interpolate: "yes" });
+      const explicit = createTypedTranslate<"downloaded" | "missing">(translator);
+      explicit("downloaded");
+      // @ts-expect-error Explicit unions restrict keys even without a local catalog.
+      explicit("greeting");
+      // @ts-expect-error Explicit key unions must contain strings only.
+      createTypedTranslate<1>(translator);
+      const language = { greeting: "Hello", goodbye: "Bye" };
+      createTypedTranslate<keyof typeof language>(translator)("greeting");
+      const mutable = { mutable: { en: "Live value" } };
+      const mutableLookup = createTypedTranslate(translator, mutable);
+      mutableLookup("mutable");
+      // @ts-expect-error Mutable inferred records still retain their literal key vocabulary.
+      mutableLookup("greeting");
+      const widened: MultilingualData = catalog;
+      createTypedTranslate(translator, widened)(dynamic);
+      createTypedTranslate(translator)(dynamic);
+      translator.translateKey(dynamic);
+      const empty = createTypedTranslate(translator, {});
+      // @ts-expect-error Empty inferred catalogs have no permitted keys.
+      empty("greeting");
+      const symbol = Symbol();
+      const unusual = createTypedTranslate(translator, { "1": { en: "String key" }, [symbol]: { en: "Not a string key" } });
+      unusual("1");
+      // @ts-expect-error Symbols do not become usable string lookup keys.
+      unusual(symbol);
+      // @ts-expect-error Numeric arguments are not implicitly converted to string keys.
+      unusual(1);
+      // @ts-expect-error Witness values follow the key-first MultilingualData contract.
+      createTypedTranslate(translator, { bad: { en: 1 } });
+      // @ts-expect-error Supply the key-first data, not the bundle envelope.
+      createTypedTranslate(translator, { "translator-i18n": { "multilingual-data": catalog } });
+      `,
+    ],
+    [
+      "usage-typed-keys",
+      ["ES2022"],
+      `
+      declare const console: { warn(...values: unknown[]): void };
+      ${typedSnippet}
+      `,
     ],
     [
       "dom",

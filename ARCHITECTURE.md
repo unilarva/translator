@@ -40,8 +40,8 @@ This document is for package maintainers. Consumer setup and behavior belong in
 - [Future Enhancements](#future-enhancements)
   - [Inserted Markup Observation](#inserted-markup-observation)
   - [Plural, Select, And Compiled Messages](#plural-select-and-compiled-messages)
-  - [Typed Keys And Catalog Tooling](#typed-keys-and-catalog-tooling)
-  - [Additional Intl Helpers](#additional-intl-helpers)
+  - [Catalog Generation And Extraction](#catalog-generation-and-extraction)
+  - [Intl Formatting Parts And Ranges](#intl-formatting-parts-and-ranges)
   - [Framework Adapters](#framework-adapters)
   - [Multiple Fallback Languages](#multiple-fallback-languages)
   - [Rich Grammar And Asynchronous Rendering](#rich-grammar-and-asynchronous-rendering)
@@ -96,7 +96,8 @@ not in stored metadata.
 
 ### `src/translator.ts`
 
-Owns the `Translator` state machine and `normalizeLanguageTag()`:
+Owns the `Translator` state machine, `normalizeLanguageTag()`, and the root-exported
+`createTypedTranslate()` wrapper:
 
 - private translation and independently observable language-registry maps;
 - bundle parsing, validation, replacement, and import reporting;
@@ -108,6 +109,14 @@ Owns the `Translator` state machine and `normalizeLanguageTag()`:
 - ordered translation-file loading and staged commits.
 
 Keep catalog mutation in this module so import invariants cannot diverge across entry points.
+
+`createTypedTranslate()` adds compile-time key checking without making `Translator` generic. Its
+overloads accept either an explicit string-key union or a key-first `MultilingualData` type witness,
+returning a function that delegates to the original translator's `translateKey()` with options
+unmodified. Do not read, validate, import, or retain the witness; runtime envelope imports retain
+their full `unknown` validation boundary. Keep lookup live across mutation, copying, loading, and
+language/policy changes, preserve exact errors, and add no snapshots or subscriptions. The helper
+requires no separate module, dependency, or subpath and does not constrain DOM or rich-text APIs.
 
 ### `src/interpolation.ts`
 
@@ -510,34 +519,35 @@ These are candidate directions, not release commitments. The package is already 
 `0.3.0` as its first public release. Keep subsequent work focused rather than adding speculative
 framework or plugin machinery. Prefer additive, opt-in APIs that preserve the existing grammar,
 events, ownership, and rendering guarantees instead of silently repurposing them.
+This section lists unimplemented work only; existing capabilities belong in Source Modules and
+Core Data Flows above, with their consumer contracts in `USAGE.md`.
 
 ### Inserted Markup Observation
 
-Catalog subscriptions already support automatic binding refresh independently of language events.
-An optional DOM mutation observer could separately handle inserted markup; explicit updates should
-remain available and disposal must release the observer. Do not conflate markup observation with
+An optional DOM mutation observer could handle inserted markup independently of language and catalog
+changes; explicit updates should remain available and disposal must release the observer.
+Do not conflate markup observation with
 catalog changes or lookup-policy changes.
 
 ### Plural, Select, And Compiled Messages
 
-`translateKey(key, { interpolate: false })` already provides raw resolved source for consumer-owned
-parsers and message compilers. Future plural/select messages or ICU integration should use an explicit
-message API or separately identified compiled-message format, not reinterpret ordinary `{name}`
-strings. `selectPlural()` already exposes native category selection, not message compilation.
+Plural/select messages or ICU integration should use an explicit message API or separately identified
+compiled-message format, not reinterpret ordinary `{name}`
+strings. Message compilation is separate from native plural-category selection.
 Replacing the default interpolation grammar would be a documented compatibility change;
 the preferred approach is additive and opt-in. Keep compilation or dependency-heavy integrations
 outside the zero-runtime-dependency core.
 
-### Typed Keys And Catalog Tooling
+### Catalog Generation And Extraction
 
-Typed wrappers and a separate catalog-generation or extraction tool can provide key checking without
-removing the dynamic string-key API. No immediate signature change is needed. Preserve runtime
-validation for downloaded or parsed data even when authoring tools produce statically checked bundles.
+Separate tooling could generate key declarations or extract catalogs from application sources.
+Preserve the dynamic string-key API and runtime validation for downloaded or parsed data even when
+authoring tools produce statically checked bundles;
+do not expand the wrapper into a generic translator or a catalog build pipeline.
 
-### Additional Intl Helpers
+### Intl Formatting Parts And Ranges
 
-Relative-time formatting and plural-rule selection are implemented as additive named helpers and
-Translator methods. Formatting parts and ranges remain future candidates that can be added without
+Formatting parts and ranges could be added as named helpers and Translator methods without
 changing existing signatures. Retain the distinction between calendar values, clock values, and
 Date instants, and keep locale-data dependence and formatter-cache behavior explicit.
 

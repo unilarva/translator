@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Package-private translator implementation; Translator and normalizeLanguageTag are public
- * API re-exported by the root entry. Provides DOM-free catalogs, lookup, events, and file loading.
+ * Package-private translator implementation; Translator, createTypedTranslate, and
+ * normalizeLanguageTag are public API re-exported by the root entry.
+ * Provides DOM-free catalogs, lookup, events, and file loading.
  *
  * SPDX-FileCopyrightText: 2020-2026 Lari Natri <lari.natri@iki.fi>
  * SPDX-License-Identifier: Apache-2.0
@@ -18,6 +19,7 @@ import type {
   LanguageRegistryChangeEvent,
   LanguageInfo,
   MissingTranslationPolicy,
+  MultilingualData,
   TranslateOptions,
   TranslationBundle,
   TranslationCatalogChangeEvent,
@@ -57,6 +59,34 @@ const I18N_ROOT_KEY = "translator-i18n";
 const MULTILINGUAL_DATA_KEY = "multilingual-data";
 const LANGUAGE_DATA_KEY = "language-data";
 const LANGUAGES_KEY = "languages";
+
+/**
+ * Creates a live lookup function restricted to an explicit application-owned key union.
+ * Type checking does not guarantee that a key exists in the translator's current catalog.
+ * @param translator - Translator whose current lookup behavior is used on every call.
+ * @returns Lookup accepting the chosen keys and ordinary TranslateOptions; errors propagate unchanged.
+ */
+export function createTypedTranslate<Key extends string>(
+  translator: Translator,
+): (key: Key, options?: TranslateOptions) => string;
+/**
+ * Creates a live lookup function whose keys are inferred from a key-first catalog.
+ * The catalog is a type witness only: it is not read, retained, validated, or imported.
+ * @param translator - Translator whose current lookup behavior is used on every call.
+ * @param catalog - Key-first multilingual data; retain literal keys with an inferred type or satisfies.
+ * @returns Lookup restricted to the catalog's string keys, with ordinary TranslateOptions.
+ */
+export function createTypedTranslate<Catalog extends MultilingualData>(
+  translator: Translator,
+  catalog: Catalog,
+): (key: Extract<keyof Catalog, string>, options?: TranslateOptions) => string;
+/** Delegates typed lookup to the live translator without capturing any catalog state. */
+export function createTypedTranslate(
+  translator: Translator,
+  _catalog?: MultilingualData,
+): (key: string, options?: TranslateOptions) => string {
+  return (key, options) => translator.translateKey(key, options);
+}
 
 /**
  * Canonicalizes a BCP 47 tag using Intl after trimming and replacing underscores with hyphens.

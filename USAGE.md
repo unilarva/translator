@@ -16,6 +16,7 @@ updates. Package internals and contributor workflows are documented in
   - [Direct Updates And Snapshots](#direct-updates-and-snapshots)
   - [Copying Between Translators](#copying-between-translators)
 - [Translation Lookup](#translation-lookup)
+  - [Typed Keys](#typed-keys)
 - [Languages](#languages)
   - [Browser Language Example](#browser-language-example)
 - [Loading Files](#loading-files)
@@ -452,6 +453,99 @@ const strictTranslator = new Translator({
 Missing policies are `empty`, `key`, `bracketed`, `text`, and `throw`. They can also be changed at
 runtime with `setMissingTranslationPolicy()` and `setMissingTranslationText()`. Invalid policies,
 non-string missing text, and invalid programmer options throw rather than silently changing policy.
+
+### Typed Keys
+
+The DOM-free root export `createTypedTranslate()` creates an opt-in TypeScript key-checking wrapper
+around an existing translator. Its overloads are:
+
+```ts
+function createTypedTranslate<Key extends string>(
+  translator: Translator,
+): (key: Key, options?: TranslateOptions) => string;
+function createTypedTranslate<Catalog extends MultilingualData>(
+  translator: Translator,
+  catalog: Catalog,
+): (key: Extract<keyof Catalog, string>, options?: TranslateOptions) => string;
+```
+
+For a local catalog, infer translation keys from the **key-first `multilingual-data` record**, not
+from the bundle envelope. Import the envelope separately through the ordinary runtime API:
+
+```ts
+import { createTypedTranslate, Translator, type MultilingualData } from "@unilarva/translator";
+
+const catalog = {
+  greeting: { en: "Hello {name}", fi: "Hei {name}" },
+  farewell: { en: "Goodbye", fi: "Hei hei" },
+} satisfies MultilingualData;
+
+const translator = new Translator({ language: "fi" });
+const report = translator.importTranslations({
+  "translator-i18n": { "multilingual-data": catalog },
+});
+if (report.issues.length > 0) console.warn("Catalog issues", report.issues);
+
+const translate = createTypedTranslate(translator, catalog);
+translate("greeting", { values: { name: "Ada" } }); // "Hei Ada"
+// translate("greting"); // TypeScript error: not "greeting" | "farewell".
+
+translator.setLanguage("en");
+translate("farewell"); // "Goodbye", using the same wrapper.
+```
+
+A literal typed object preserves its property keys without `as const`; `as const` is optional,
+and `satisfies MultilingualData` checks the shape without widening the keys. In contrast, an explicit
+broad annotation such as `const catalog: MultilingualData = ...` loses literal key checking: the
+wrapper accepts `string`. Calling `createTypedTranslate(translator)` without either an explicit
+generic key union or a catalog witness likewise infers `string` and imposes no key restrictions.
+The `translator-i18n` envelope is not accepted as a catalog witness.
+
+For downloaded catalogs, declare the application's expected vocabulary independently:
+
+```ts
+import { createTypedTranslate, Translator } from "@unilarva/translator";
+
+type AppKey = "greeting" | "farewell";
+const translator = new Translator({ language: "en" });
+const translate = createTypedTranslate<AppKey>(translator);
+
+const response = await fetch("/i18n/common.json");
+if (!response.ok) throw new Error(`Catalog request failed: ${response.status}`);
+const bundle: unknown = await response.json();
+const report = translator.importTranslations(bundle);
+if (report.issues.length > 0) console.warn("Catalog issues", report.issues);
+
+translate("greeting", { values: { name: "Ada" } });
+```
+
+Typed keys are an authoring aid, not a trust guarantee for downloaded data. `importTranslations()`
+continues to accept `unknown` and perform full runtime validation; inspect its report. The wrapper
+does not guarantee that an expected key was imported or has a value in any particular locale.
+
+Language-oriented `LanguageData` records are structurally indistinguishable from key-first records.
+**Do not pass the `language-data` map itself as the witness:** that would infer language names as
+keys, not translation keys. Use an explicit union or `keyof` a single language's key map instead:
+
+```ts
+const languageData = { en: { greeting: "Hello", farewell: "Goodbye" } };
+translator.importTranslations({ "translator-i18n": { "language-data": languageData } });
+const translateEnglishKeys = createTypedTranslate<keyof typeof languageData.en>(translator);
+translateEnglishKeys("greeting");
+```
+
+The catalog argument is **only a type witness**: the factory does not read, validate, import, or
+retain it. Every wrapper call delegates to the original translator's `translateKey()` with options
+forwarded unmodified. It uses live state after imports, direct mutations, `copyFrom()`, file loading,
+and language or policy changes; ordinary interpolation, fallback, and missing-value behavior remain
+unchanged. Errors propagate exactly, without catching or replacing them. The wrapper neither
+snapshots the translator nor subscribes to changes, and it does not automatically rerender a UI.
+
+Only calls through that wrapper receive compile-time key checking. It does not infer required
+interpolation names, guarantee key existence or locale coverage, block JavaScript runtime keys, or
+constrain the translator's other methods, DOM markers, or rich-text APIs. `Translator` remains
+nongeneric and its existing string-key API remains available. No generated key tooling, dependency,
+new module, or package subpath is required.
 
 ## Languages
 
@@ -1370,6 +1464,7 @@ eventually emits them.
 The root entry exports:
 
 - `Translator` and `normalizeLanguageTag()`;
+- `createTypedTranslate()` for opt-in [typed key wrappers](#typed-keys);
 - standalone number, currency, calendar-date, clock-time, weekday, and relative-time formatters,
   plus `selectPlural()` returning `Intl.LDMLPluralRule`;
 - `RelativeTimeFormatOptions` and `PluralSelectOptions`, combining their native `Intl` options

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add root-exported `createTypedTranslate()` for opt-in compile-time key checking from an explicit
+  string union or key-first catalog type witness. The witness is not read, validated, imported, or
+  retained; envelope imports keep full runtime validation. Calls delegate with unmodified options
+  to the live translator, preserving lookup behavior and exact errors. Existing string-key APIs
+  remain unchanged; no generated tooling, runtime dependency, module, or subpath is added.
 - Add DOM-free `formatRelativeTime()` and `selectPlural()` helpers and matching Translator methods,
   with root-exported `RelativeTimeFormatOptions` and `PluralSelectOptions` types. Methods use the
   active language or a per-call override and log original failures as `relative-time-format-failed`

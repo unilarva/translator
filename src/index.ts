@@ -13,7 +13,7 @@
  * @author Lari Natri
  */
 
-export { normalizeLanguageTag, Translator } from "./translator.js";
+export { createTypedTranslate, normalizeLanguageTag, Translator } from "./translator.js";
 export {
   formatCurrency,
   formatDate,

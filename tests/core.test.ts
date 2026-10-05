@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Translator, translateRichText } from "../src/index.ts";
+import { createTypedTranslate, Translator, translateRichText } from "../src/index.ts";
 import type { TranslationCatalogChangeEvent, TranslatorCopyOptions } from "../src/index.ts";
 import { interpolate } from "../src/interpolation.ts";
 import type {
@@ -26,6 +26,79 @@ import type {
   TranslationLoadOptions,
   TranslatorLogEntry,
 } from "../src/types.ts";
+
+test("typed lookup delegates to live state without importing or retaining its type witness", () => {
+  const translator = new Translator({
+    language: "fi",
+    fallbackLanguage: "en",
+    missingTranslationPolicy: "key",
+  });
+  const catalog = {
+    greeting: { en: "Hello {name}", fi: "Hei {name}" },
+    empty: { en: "" },
+  } as const;
+  const t = createTypedTranslate(translator, catalog);
+  assert.equal(t("greeting"), "greeting");
+  translator.importTranslations({ "translator-i18n": { "multilingual-data": catalog } });
+  const detached = t;
+  assert.equal(detached("greeting", { values: { name: "Ada" } }), "Hei Ada");
+  assert.equal(t("greeting", { language: "en", values: { name: "Ada" } }), "Hello Ada");
+  assert.equal(t("greeting", { interpolate: false }), "Hei {name}");
+  assert.equal(t("empty"), "");
+  translator.setLanguage("en");
+  assert.equal(t("greeting", { values: { name: "Ada" } }), "Hello Ada");
+  translator.setTranslation("greeting", { en: "Updated" });
+  assert.equal(t("greeting"), "Updated");
+  translator.clearTranslations();
+  assert.equal(t("greeting"), "greeting");
+  const inaccessible = new Proxy(catalog, {
+    get() {
+      throw new Error("Must not read witness");
+    },
+    ownKeys() {
+      throw new Error("Must not scan witness");
+    },
+  });
+  const proxyLookup = createTypedTranslate(translator, inaccessible);
+  assert.equal(proxyLookup("greeting"), "greeting");
+});
+
+test("explicit typed keys preserve loading, copying, missing policy, and dynamic lookup", async () => {
+  const translator = new Translator({
+    language: "fi",
+    fallbackLanguage: "en",
+    fallbackToAnyLanguage: false,
+    missingTranslationPolicy: "throw",
+  });
+  const t = createTypedTranslate<"greeting" | "missing">(translator);
+  assert.throws(() => t("missing"), /missing/);
+  await translator.loadTranslationFiles(["catalog.json"], {
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        "translator-i18n": { "language-data": { en: { greeting: "Downloaded" } } },
+      }),
+    }),
+  });
+  assert.equal(t("greeting"), "Downloaded");
+  const source = new Translator();
+  source.setTranslation("greeting", { en: "Copied" });
+  translator.copyFrom(source);
+  assert.equal(t("greeting"), "Copied");
+  translator.setTranslation("dynamic", { en: "Outside typed vocabulary" });
+  assert.equal(translator.translateKey("dynamic"), "Outside typed vocabulary");
+  const originalError = new Error("Consumer lookup error");
+  class CustomTranslator extends Translator {
+    override translateKey(): string {
+      throw originalError;
+    }
+  }
+  assert.throws(
+    () => createTypedTranslate<"key">(new CustomTranslator())("key"),
+    error => error === originalError,
+  );
+});
 
 /** Wraps untrusted key-first data for runtime validation tests. */
 const bundle = (data: Record<string, unknown>) => ({

@@ -39,8 +39,9 @@ servers, workers, and command-line tools; browser integration is isolated in
 - **Locale-aware and deterministic.** Canonical BCP 47 language tags, ordered multiple fallback
   languages with progressive subtag fallback,
   configurable missing-value behavior, and strict `Intl` helpers for formatting, relative time,
-  and plural-category selection keep lookup and formatting rules explicit. Number, currency, and
-  relative-time parts support consumer-controlled rendering without parsing formatted strings.
+  and plural-category selection keep lookup and formatting rules explicit. Number, currency, date,
+  clock-time, weekday, and relative-time parts support consumer-controlled rendering without parsing
+  formatted strings.
 - **Scoped UIs and synchronized language controls.** Bind a document or subtree, use independent
   translators for previews, and connect existing native selects or details dropdowns to an observable
   language registry. Direction synchronization is opt-in; styling and persistence stay application-owned.

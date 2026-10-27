@@ -18,12 +18,15 @@ export {
   formatCurrency,
   formatCurrencyToParts,
   formatDate,
+  formatDateToParts,
   formatNumber,
   formatNumberToParts,
   formatRelativeTime,
   formatRelativeTimeToParts,
   formatTime,
+  formatTimeToParts,
   formatWeekday,
+  formatWeekdayToParts,
   selectPlural,
 } from "./intl.js";
 export { parseRichText, translateRichText } from "./rich-text.js";

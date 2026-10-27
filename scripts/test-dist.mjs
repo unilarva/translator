@@ -58,6 +58,25 @@ function assertParts(api, translator) {
     ...rounding,
   }).formatToParts(1234.25);
   const relative = new Intl.RelativeTimeFormat("en").formatToParts(-2, "day");
+  const calendar = { year: 2026, month: 10, day: 3 };
+  const instant = new Date("2026-10-03T13:45:00Z");
+  const calendarDate = new Date(Date.UTC(2026, 9, 3));
+  const dateOptions = { year: "numeric", month: "numeric", day: "numeric", timeZone: "UTC" };
+  const date = new Intl.DateTimeFormat("en", dateOptions).formatToParts(calendarDate);
+  const instantOptions = { dateStyle: "long", timeZone: "America/New_York" };
+  const instantParts = new Intl.DateTimeFormat("en", instantOptions).formatToParts(instant);
+  const clock = { hour: 13, minute: 45, second: 0 };
+  const clockDate = new Date(Date.UTC(1970, 0, 1, 13, 45));
+  const timeOptions = { hour: "numeric", minute: "2-digit", timeZone: "UTC" };
+  const time = new Intl.DateTimeFormat("en", timeOptions).formatToParts(clockDate);
+  const seconds = new Intl.DateTimeFormat("en", {
+    ...timeOptions,
+    second: "2-digit",
+  }).formatToParts(clockDate);
+  const monday = new Date(Date.UTC(1970, 0, 5));
+  const weekday = new Intl.DateTimeFormat("en", { weekday: "long", timeZone: "UTC" }).formatToParts(
+    monday,
+  );
   for (const [format, expected] of [
     [() => api.formatNumberToParts(1234.25, "en", rounding), number],
     [() => translator.formatNumberToParts(1234.25, rounding), number],
@@ -65,6 +84,18 @@ function assertParts(api, translator) {
     [() => translator.formatCurrencyToParts(1234.25, { currency: "eur", ...rounding }), currency],
     [() => api.formatRelativeTimeToParts(-2, "day", "en"), relative],
     [() => translator.formatRelativeTimeToParts(-2, "day"), relative],
+    [() => api.formatDateToParts(calendar, "en"), date],
+    [() => translator.formatDateToParts(calendar), date],
+    [() => api.formatDateToParts("2026-10-03", "en"), date],
+    [() => translator.formatDateToParts("2026-10-03"), date],
+    [() => api.formatDateToParts(instant, "en", instantOptions), instantParts],
+    [() => translator.formatDateToParts(instant, instantOptions), instantParts],
+    [() => api.formatTimeToParts("13:45", "en"), time],
+    [() => translator.formatTimeToParts("13:45"), time],
+    [() => api.formatTimeToParts(clock, "en"), seconds],
+    [() => translator.formatTimeToParts(clock), seconds],
+    [() => api.formatWeekdayToParts(0, "en"), weekday],
+    [() => translator.formatWeekdayToParts(0), weekday],
   ]) {
     const first = format();
     const second = format();
@@ -93,6 +124,37 @@ function assertParts(api, translator) {
     translator.formatRelativeTimeToParts(0, "day", { language: "fi", numeric: "auto" }),
     new Intl.RelativeTimeFormat("fi", { numeric: "auto" }).formatToParts(0, "day"),
   );
+  for (const format of [
+    () => api.formatDateToParts(calendar, "en", { language: "fi", timeZone: "America/New_York" }),
+    () => translator.formatDateToParts(calendar, { language: "fi", timeZone: "America/New_York" }),
+  ]) {
+    assert.deepEqual(
+      format(),
+      new Intl.DateTimeFormat("fi", dateOptions).formatToParts(calendarDate),
+    );
+  }
+  for (const format of [
+    () => api.formatTimeToParts(clock, "en", { language: "fi", timeStyle: "medium" }),
+    () => translator.formatTimeToParts(clock, { language: "fi", timeStyle: "medium" }),
+  ]) {
+    assert.deepEqual(
+      format(),
+      new Intl.DateTimeFormat("fi", { timeStyle: "medium", timeZone: "UTC" }).formatToParts(
+        clockDate,
+      ),
+    );
+  }
+  for (const format of [
+    () => api.formatWeekdayToParts(6, "en", { language: "fi", width: "short" }),
+    () => translator.formatWeekdayToParts(6, { language: "fi", width: "short" }),
+  ]) {
+    assert.deepEqual(
+      format(),
+      new Intl.DateTimeFormat("fi", { weekday: "short", timeZone: "UTC" }).formatToParts(
+        new Date(Date.UTC(1970, 0, 11)),
+      ),
+    );
+  }
 }
 
 assertParts(core, translator);
@@ -210,7 +272,7 @@ try {
       "core",
       ["ES2023"],
       `
-      import { Translator, formatDate, formatRelativeTime, formatNumberToParts, formatCurrencyToParts, formatRelativeTimeToParts, selectPlural, parseRichText, type RelativeTimeFormatOptions, type PluralSelectOptions, type TranslationBundle, type TranslationCatalogChangeEvent, type TranslatorCopyOptions } from "@unilarva/translator";
+      import { Translator, formatDate, formatRelativeTime, formatNumberToParts, formatCurrencyToParts, formatRelativeTimeToParts, formatDateToParts, formatTimeToParts, formatWeekdayToParts, selectPlural, parseRichText, type CalendarDate, type ClockTime, type DateFormatOptions, type TimeFormatOptions, type WeekdayFormatOptions, type RelativeTimeFormatOptions, type PluralSelectOptions, type TranslationBundle, type TranslationCatalogChangeEvent, type TranslatorCopyOptions } from "@unilarva/translator";
       const bundle: TranslationBundle = { "translator-i18n": { "language-data": { en: { greeting: "Hello" } } } };
       const translator = new Translator({ language: "en" });
       const unsubscribeCatalog = translator.subscribeCatalog((event: TranslationCatalogChangeEvent) => {
@@ -257,6 +319,75 @@ try {
       const methodNumberParts: Intl.NumberFormatPart[] = translator.formatNumberToParts(1.25, { ...rounding, language: "fi" });
       const methodCurrencyParts: Intl.NumberFormatPart[] = translator.formatCurrencyToParts(1.25, { currency: "EUR" });
       const methodRelativeParts: Intl.RelativeTimeFormatPart[] = translator.formatRelativeTimeToParts(1, "weeks", relativeOptions);
+      const calendar: CalendarDate = { year: 2026, month: 10, day: 3 };
+      const clock: ClockTime = { hour: 13, minute: 45, second: 0 };
+      const dateOptions: DateFormatOptions = { language: "fi", dateStyle: "long", timeZone: "UTC" };
+      const timeOptions: TimeFormatOptions = { language: "fi", timeStyle: "medium", hour12: false };
+      const weekdayOptions: WeekdayFormatOptions = { language: "fi", width: "short" };
+      const dateParts: Intl.DateTimeFormatPart[] = formatDateToParts(calendar, "en", dateOptions);
+      const timeParts: Intl.DateTimeFormatPart[] = formatTimeToParts(clock, "en", timeOptions);
+      const weekdayParts: Intl.DateTimeFormatPart[] = formatWeekdayToParts(0, "en", weekdayOptions);
+      const methodDateParts: Intl.DateTimeFormatPart[] = translator.formatDateToParts(new Date(), dateOptions);
+      const methodTimeParts: Intl.DateTimeFormatPart[] = translator.formatTimeToParts("13:45", timeOptions);
+      const methodWeekdayParts: Intl.DateTimeFormatPart[] = translator.formatWeekdayToParts(6, weekdayOptions);
+      formatDateToParts(new Date(), "en");
+      formatDateToParts("2026-10-03", "en");
+      translator.formatDateToParts(calendar);
+      translator.formatDateToParts("2026-10-03");
+      formatTimeToParts("13:45:00", "en");
+      translator.formatTimeToParts(clock);
+      formatWeekdayToParts(6, "en");
+      translator.formatWeekdayToParts(0);
+      dateParts.push({ type: "literal", value: "consumer-owned" });
+      timeParts[0]!.value = "consumer-owned";
+      // @ts-expect-error Dates do not accept numeric timestamps.
+      formatDateToParts(0, "en");
+      // @ts-expect-error Calendar records require a day.
+      translator.formatDateToParts({ year: 2026, month: 10 });
+      // @ts-expect-error Clock inputs are not Date instants.
+      formatTimeToParts(new Date(), "en");
+      // @ts-expect-error Clock records require minutes.
+      translator.formatTimeToParts({ hour: 13 });
+      // @ts-expect-error Weekdays use numeric indices, not names.
+      formatWeekdayToParts("Monday", "en");
+      // @ts-expect-error Weekday methods do not coerce strings.
+      translator.formatWeekdayToParts("0");
+      // @ts-expect-error Clock parts forbid date styles.
+      formatTimeToParts(clock, "en", { dateStyle: "short" });
+      // @ts-expect-error Clock parts forbid eras.
+      translator.formatTimeToParts(clock, { era: "short" });
+      // @ts-expect-error Clock parts forbid years.
+      formatTimeToParts(clock, "en", { year: "numeric" });
+      // @ts-expect-error Clock parts forbid months.
+      translator.formatTimeToParts(clock, { month: "long" });
+      // @ts-expect-error Clock parts forbid days.
+      formatTimeToParts(clock, "en", { day: "numeric" });
+      // @ts-expect-error Clock parts forbid weekdays.
+      translator.formatTimeToParts(clock, { weekday: "long" });
+      // @ts-expect-error Clock parts forbid time zones.
+      formatTimeToParts(clock, "en", { timeZone: "UTC" });
+      // @ts-expect-error Clock parts forbid zone names.
+      translator.formatTimeToParts(clock, { timeZoneName: "short" });
+      // @ts-expect-error Long clock styles include a zone.
+      formatTimeToParts(clock, "en", { timeStyle: "long" });
+      // @ts-expect-error Full clock styles include a zone.
+      translator.formatTimeToParts(clock, { timeStyle: "full" });
+      // @ts-expect-error Weekday width is a closed union.
+      formatWeekdayToParts(0, "en", { width: "wide" });
+      // @ts-expect-error Weekday options do not expose native date fields.
+      translator.formatWeekdayToParts(0, { year: "numeric" });
+      // @ts-expect-error Date helpers return parts arrays, not strings.
+      const wrongDateParts: string = formatDateToParts(calendar, "en");
+      // @ts-expect-error Date methods return parts arrays, not strings.
+      const wrongMethodDateParts: string = translator.formatDateToParts(calendar);
+      // @ts-expect-error Clock helpers return parts arrays, not strings.
+      const wrongTimeParts: string = formatTimeToParts(clock, "en");
+      // @ts-expect-error Clock methods return parts arrays, not strings.
+      const wrongMethodTimeParts: string = translator.formatTimeToParts(clock);
+      // @ts-expect-error Weekday helpers return parts arrays, not strings.
+      const wrongWeekdayParts: string = formatWeekdayToParts(0, "en");
+      // @ts-expect-error Weekday methods return parts arrays, not strings.
+      const wrongMethodWeekdayParts: string = translator.formatWeekdayToParts(0);
       for (const part of relativeParts) {
         if (part.type !== "literal") {
           const unit: Intl.RelativeTimeFormatUnitSingular = part.unit;

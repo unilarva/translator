@@ -480,6 +480,16 @@ export function formatDate(
   language: string,
   options: DateFormatOptions = {},
 ): string {
+  const { formatter, date } = prepareDate(value, language, options);
+  return formatter.format(date);
+}
+
+/** Shares date parsing, option snapshots, defaults, and zone-sensitive caching across result forms. */
+function prepareDate(
+  value: Date | string | CalendarDate,
+  language: string,
+  options: DateFormatOptions,
+) {
   const { language: languageOverride, ...providedOptions } = options;
   const { date, calendarOnly } = parseCalendarDate(value);
   const defaults: Intl.DateTimeFormatOptions =
@@ -494,11 +504,42 @@ export function formatDate(
   };
   // The host time zone can change between calls when an instant has no explicit zone.
   const key = formatOptions.timeZone === undefined ? undefined : formatterKey(tag, formatOptions);
-  return cachedFormatter(
+  const formatter = cachedFormatter(
     dateTimeFormatters,
     key,
     () => new Intl.DateTimeFormat(tag, formatOptions),
-  ).format(date);
+  );
+  return { formatter, date };
+}
+
+/**
+ * Formats an instant or Gregorian calendar date as native structured parts.
+ * @param value - Valid Date, strict `YYYY-MM-DD` string, or integer calendar-date record.
+ * Calendar-only inputs force UTC and ignore supplied zones; instants use the supplied or host zone.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Native options and locale override; numeric year/month/day default unless a style is set.
+ * @returns Fresh, caller-owned mutable native parts and records, not HTML. Native whitespace may differ from string formatting.
+ * @throws {RangeError} If the date, effective locale, or options are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.DateTimeFormat.prototype.formatToParts`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatDateToParts(
+  value: Date | string | CalendarDate,
+  language: string,
+  options: DateFormatOptions = {},
+): Intl.DateTimeFormatPart[] {
+  const { formatter, date } = prepareDate(value, language, options);
+  return dateTimeParts(formatter, date);
+}
+
+/** Checks only the requested native parts capability, without probing during import or string calls. */
+function dateTimeParts(formatter: Intl.DateTimeFormat, date: Date): Intl.DateTimeFormatPart[] {
+  if (typeof formatter.formatToParts !== "function") {
+    throw new TypeError(
+      "Intl.DateTimeFormat.prototype.formatToParts is unavailable; use a supporting runtime or consumer-provided polyfill",
+    );
+  }
+  return formatter.formatToParts(date);
 }
 
 /**
@@ -519,6 +560,12 @@ export function formatTime(
   language: string,
   options: TimeFormatOptions = {},
 ): string {
+  const { formatter, date } = prepareTime(value, language, options);
+  return formatter.format(date);
+}
+
+/** Shares clock restrictions, parsing, seconds defaults, and UTC formatter caching across result forms. */
+function prepareTime(value: string | ClockTime, language: string, options: TimeFormatOptions) {
   for (const option of CLOCK_FORBIDDEN_OPTIONS) {
     if (option in options) {
       throw new RangeError(`Clock time formatting does not support ${option}`);
@@ -547,11 +594,32 @@ export function formatTime(
     ),
     timeZone: "UTC",
   };
-  return cachedFormatter(
+  const formatter = cachedFormatter(
     dateTimeFormatters,
     formatterKey(tag, formatOptions),
     () => new Intl.DateTimeFormat(tag, formatOptions),
-  ).format(date);
+  );
+  return { formatter, date };
+}
+
+/**
+ * Formats a clock time as native parts without date or zone labels or time-zone conversion.
+ * @param value - Strict `HH:MM`/`HH:MM:SS` string or integer clock-time record.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Clock-only options; defaults to hour/minute and seconds when supplied, including zero.
+ * Defined components override defaults; short/medium styles replace them. Date/zone fields are forbidden even if undefined.
+ * @returns Fresh, caller-owned mutable native parts and records, not HTML; native whitespace may differ from string formatting.
+ * @throws {RangeError} If clock fields, locale/options, or clock-only restrictions are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.DateTimeFormat.prototype.formatToParts`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatTimeToParts(
+  value: string | ClockTime,
+  language: string,
+  options: TimeFormatOptions = {},
+): Intl.DateTimeFormatPart[] {
+  const { formatter, date } = prepareTime(value, language, options);
+  return dateTimeParts(formatter, date);
 }
 
 /**
@@ -568,6 +636,12 @@ export function formatWeekday(
   language: string,
   options: WeekdayFormatOptions = {},
 ): string {
+  const { formatter, date } = prepareWeekday(weekday, language, options);
+  return formatter.format(date);
+}
+
+/** Shares weekday validation, UTC anchoring, width defaults, and formatter caching across result forms. */
+function prepareWeekday(weekday: number, language: string, options: WeekdayFormatOptions) {
   if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
     throw new RangeError("Weekday must be an integer from 0 (Monday) through 6 (Sunday)");
   }
@@ -577,9 +651,29 @@ export function formatWeekday(
     weekday: options.width ?? "long",
     timeZone: "UTC",
   };
-  return cachedFormatter(
+  const formatter = cachedFormatter(
     dateTimeFormatters,
     formatterKey(tag, formatOptions),
     () => new Intl.DateTimeFormat(tag, formatOptions),
-  ).format(date);
+  );
+  return { formatter, date };
+}
+
+/**
+ * Formats a Monday-based weekday as native parts without host-zone dependence.
+ * @param weekday - Integer from 0 (Monday) through 6 (Sunday).
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Name width and locale override; defaults to long width.
+ * @returns Fresh, caller-owned mutable native parts and records in native order, not HTML.
+ * @throws {RangeError} If the weekday, effective locale, or width is invalid.
+ * @throws {TypeError} If Intl rejects coercion, or `Intl.DateTimeFormat.prototype.formatToParts`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatWeekdayToParts(
+  weekday: number,
+  language: string,
+  options: WeekdayFormatOptions = {},
+): Intl.DateTimeFormatPart[] {
+  const { formatter, date } = prepareWeekday(weekday, language, options);
+  return dateTimeParts(formatter, date);
 }

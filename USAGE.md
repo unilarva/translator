@@ -879,7 +879,7 @@ first when a logger is configured, then rethrow them. Exact locale output depend
 
 ### Structured Formatting Parts
 
-The root entry exports three native parts helpers alongside the existing string formatters:
+The root entry exports six native parts helpers alongside the existing string formatters:
 
 ```ts
 function formatNumberToParts(
@@ -898,6 +898,21 @@ function formatRelativeTimeToParts(
   language: string,
   options?: RelativeTimeFormatOptions,
 ): Intl.RelativeTimeFormatPart[];
+function formatDateToParts(
+  value: Date | string | CalendarDate,
+  language: string,
+  options?: DateFormatOptions,
+): Intl.DateTimeFormatPart[];
+function formatTimeToParts(
+  value: string | ClockTime,
+  language: string,
+  options?: TimeFormatOptions,
+): Intl.DateTimeFormatPart[];
+function formatWeekdayToParts(
+  weekday: number,
+  language: string,
+  options?: WeekdayFormatOptions,
+): Intl.DateTimeFormatPart[];
 ```
 
 Matching Translator methods omit the explicit language argument:
@@ -906,6 +921,9 @@ Matching Translator methods omit the explicit language argument:
 translator.formatNumberToParts(1234.5);
 translator.formatCurrencyToParts(12.5, { currency: "eur", language: "fi-FI" });
 translator.formatRelativeTimeToParts(-1, "day", { numeric: "auto" });
+translator.formatDateToParts("2026-09-30", { dateStyle: "long" });
+translator.formatTimeToParts("09:30:00");
+translator.formatWeekdayToParts(0, { width: "short" }); // Monday = 0
 ```
 
 Standalone calls take an explicit language, while methods default to the active language. For both,
@@ -915,13 +933,19 @@ Formatting never uses the catalog or primary/additional translation fallback to 
 ```ts
 import {
   formatCurrencyToParts,
+  formatDateToParts,
   formatNumberToParts,
   formatRelativeTimeToParts,
+  formatTimeToParts,
+  formatWeekdayToParts,
 } from "@unilarva/translator";
 
 const numberParts = formatNumberToParts(1234.5, "en-US");
 const currencyParts = formatCurrencyToParts(12.5, "fi-FI", { currency: "EUR" });
 const relativeParts = formatRelativeTimeToParts(-1, "day", "en", { numeric: "auto" });
+const dateParts = formatDateToParts({ year: 2026, month: 9, day: 30 }, "en-GB");
+const timeParts = formatTimeToParts({ hour: 9, minute: 30, second: 0 }, "fi-FI");
+const weekdayParts = formatWeekdayToParts(6, "en", { width: "narrow" });
 ```
 
 These helpers use the same parsed values, effective options, and defaults as their string counterparts.
@@ -931,11 +955,28 @@ apply. Relative-time options default to `{}`, retaining `style: "long"` and `num
 singular and plural units retain native validation and coercion. The application still chooses the
 unit and computes the difference.
 
-All three require finite JavaScript numbers. `NaN`, infinities, numeric strings, bigint, and other
-non-number inputs throw `RangeError` without numeric coercion. Invalid effective locales, currency
+Number, currency, and relative-time parts require finite JavaScript numbers. `NaN`, infinities,
+numeric strings, bigint, and other non-number inputs throw `RangeError` without numeric coercion.
+Invalid effective locales, currency
 codes, and recognized options throw under the same strict/native rules as string formatting;
 native option/coercion errors propagate unchanged. Newer TypeScript Intl options are passed through,
 but declarations do not guarantee that every host implements them.
+
+Date, clock-time, and weekday parts reuse their string counterparts' strict parsing and option
+types; their options default to `{}`. Date parts accept strict `YYYY-MM-DD` strings,
+`{ year, month, day }` calendar records, or `Date` instants, including cross-realm Dates. Calendar
+values force UTC and ignore `timeZone`; requested time components describe synthetic midnight.
+Instants use the explicit `timeZone` or the host zone. Numeric year/month/day defaults are merged
+unless `dateStyle` or `timeStyle` is supplied.
+
+Clock parts accept strict `HH:MM` / `HH:MM:SS` strings or `{ hour, minute, second? }` records, without
+time-zone conversion. Unless `timeStyle` is supplied, hour/minute defaults include seconds only when
+the input supplied them, including explicit zero; allowed component options can override these
+defaults. Only `short` and `medium` styles are supported. The `dateStyle`, `era`, `year`, `month`,
+`day`, `weekday`, `timeZone`, and `timeZoneName` options are forbidden even when explicitly
+`undefined`; `long` and `full` time styles are rejected. Neither synthetic calendar fields nor a
+time-zone label appear in clock parts. Weekday parts accept only integers from Monday `0` through
+Sunday `6`, with `width: "long"` by default or `"short"` / `"narrow"` on request.
 
 Results are fresh, mutable, caller-owned native arrays with fresh part records, not frozen snapshots.
 The package caches formatters, never result arrays or records; mutating a result cannot affect later
@@ -943,20 +984,27 @@ calls. Native order, part types, and literal text are preserved, not reconstruct
 formatted string. Relative-time literal parts, including an entire word such as `"yesterday"`, may
 lack `unit`; check the part's shape before reading it.
 
+Native `Intl.DateTimeFormat.format()` and `formatToParts()` can differ in literal whitespace.
+Joining date, clock-time, or weekday parts is therefore not guaranteed to reproduce the corresponding
+string helper byte-for-byte; use the native parts as returned rather than normalizing their literals.
+
 Parts are structured text, not HTML or a safe-HTML representation. Consumers own rendering and
-context-appropriate escaping. These APIs add no DOM markers or automatic UI updates. Date, clock-time,
-and weekday parts and all range APIs remain future work; existing string return types are unchanged.
+context-appropriate escaping. These APIs add no DOM markers or automatic UI updates. All six
+single-value parts APIs are available; all range APIs remain future work. Existing string return
+types are unchanged.
 
 Each parts call checks only its required native method at call time:
-`Intl.NumberFormat.prototype.formatToParts` for number/currency, or
-`Intl.RelativeTimeFormat.prototype.formatToParts` for relative time. If unavailable, it throws an
+`Intl.NumberFormat.prototype.formatToParts` for number/currency,
+`Intl.RelativeTimeFormat.prototype.formatToParts` for relative time, or
+`Intl.DateTimeFormat.prototype.formatToParts` for date/clock-time/weekday. If unavailable, it throws an
 actionable `TypeError` identifying the missing method and the need for a supporting runtime or a
 consumer-provided polyfill. Imports and unrelated operations do not probe or require that method;
 there is no string-splitting fallback or package-installed polyfill.
 
 Standalone helpers throw without logging. Translator methods log the original failure through the
-safe logger adapter as `number-format-to-parts-failed`, `currency-format-to-parts-failed`, or
-`relative-time-format-to-parts-failed`, then rethrow the identical error, including option-coercion
+safe logger adapter as `number-format-to-parts-failed`, `currency-format-to-parts-failed`,
+`relative-time-format-to-parts-failed`, `date-format-to-parts-failed`, `time-format-to-parts-failed`, or
+`weekday-format-to-parts-failed`, then rethrow the identical error, including option-coercion
 and missing-method failures. Logger failures do not replace that error. Parts calls do not mutate
 translator settings or emit language, catalog, or registry events.
 
@@ -1626,8 +1674,9 @@ The root entry exports:
 - `createTypedTranslate()` for opt-in [typed key wrappers](#typed-keys);
 - standalone number, currency, calendar-date, clock-time, weekday, and relative-time formatters,
   plus `selectPlural()` returning `Intl.LDMLPluralRule`;
-- `formatNumberToParts()`, `formatCurrencyToParts()`, and `formatRelativeTimeToParts()`, also available
-  as Translator methods, returning native mutable parts arrays;
+- `formatNumberToParts()`, `formatCurrencyToParts()`, `formatRelativeTimeToParts()`,
+  `formatDateToParts()`, `formatTimeToParts()`, and `formatWeekdayToParts()`, also available as
+  Translator methods, returning native mutable parts arrays;
 - `RelativeTimeFormatOptions` and `PluralSelectOptions`, combining their native `Intl` options
   with `LocaleFormatOptions`;
 - `parseRichText()` and `translateRichText()`;

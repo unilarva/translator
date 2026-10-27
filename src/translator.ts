@@ -40,12 +40,15 @@ import {
   formatCurrency as formatCurrencyValue,
   formatCurrencyToParts as formatCurrencyParts,
   formatDate as formatDateValue,
+  formatDateToParts as formatDateParts,
   formatNumber as formatNumberValue,
   formatNumberToParts as formatNumberParts,
   formatRelativeTime as formatRelativeTimeValue,
   formatRelativeTimeToParts as formatRelativeTimeParts,
   formatTime as formatTimeValue,
+  formatTimeToParts as formatTimeParts,
   formatWeekday as formatWeekdayValue,
+  formatWeekdayToParts as formatWeekdayParts,
   selectPlural as selectPluralValue,
   type CalendarDate,
   type ClockTime,
@@ -1214,6 +1217,25 @@ export class Translator {
   }
 
   /**
+   * Formats date parts using the active language unless `options.language` overrides it.
+   * @param value - Valid Date instant, strict YYYY-MM-DD string, or integer calendar fields.
+   * Calendar-only inputs force UTC; Date instants use the explicit or host zone.
+   * @param options - Native date options; numeric year/month/day default unless a style is set.
+   * @returns Fresh, caller-owned mutable native parts and records, not HTML; whitespace may differ from strings.
+   * @throws RangeError for invalid dates/locale/options; TypeError for native option errors or missing
+   * Intl.DateTimeFormat formatToParts support (requires a supporting runtime or consumer polyfill).
+   * Failures are logged and the original error is rethrown.
+   */
+  public formatDateToParts(
+    value: Date | string | CalendarDate,
+    options: DateFormatOptions = {},
+  ): Intl.DateTimeFormatPart[] {
+    return this.#format("date-format-to-parts-failed", () =>
+      formatDateParts(value, this.#language, options),
+    );
+  }
+
+  /**
    * Formats clock fields without time-zone conversion, defaulting to hour/minute and explicit seconds.
    * @param value - Strict HH:MM or HH:MM:SS string, or integer clock fields (seconds default to zero).
    * @param options - Zone-free Intl clock options and language override; short/medium styles are supported.
@@ -1227,6 +1249,26 @@ export class Translator {
   }
 
   /**
+   * Formats clock parts using the active language unless `options.language` overrides it.
+   * @param value - Strict HH:MM/HH:MM:SS string or integer clock fields; no zone conversion occurs.
+   * @param options - Clock-only options; defaults to hour/minute and supplied seconds, including zero.
+   * Short/medium styles replace defaults; date/zone fields are forbidden even when undefined.
+   * @returns Fresh, caller-owned mutable native parts and records with no date/zone labels, not HTML.
+   * Native whitespace may differ from string formatting.
+   * @throws RangeError for invalid clocks/locale/options or forbidden fields; TypeError for native option
+   * errors or missing Intl.DateTimeFormat formatToParts support (requires a supporting runtime or polyfill).
+   * Failures are logged and the original error is rethrown.
+   */
+  public formatTimeToParts(
+    value: string | ClockTime,
+    options: TimeFormatOptions = {},
+  ): Intl.DateTimeFormatPart[] {
+    return this.#format("time-format-to-parts-failed", () =>
+      formatTimeParts(value, this.#language, options),
+    );
+  }
+
+  /**
    * Formats a weekday numbered Monday 0 through Sunday 6.
    * @param weekday - Integer from 0 to 6.
    * @param options - Name width (defaults to long) and optional language override.
@@ -1236,6 +1278,24 @@ export class Translator {
   public formatWeekday(weekday: number, options: WeekdayFormatOptions = {}): string {
     return this.#format("weekday-format-failed", () =>
       formatWeekdayValue(weekday, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats weekday parts using the active language unless `options.language` overrides it.
+   * @param weekday - Integer from 0 (Monday) through 6 (Sunday), independent of the host zone.
+   * @param options - Name width (defaults to long) and optional language override.
+   * @returns Fresh, caller-owned mutable native parts and records, not HTML.
+   * @throws RangeError for invalid weekdays/locale/width; TypeError for native coercion errors or missing
+   * Intl.DateTimeFormat formatToParts support (requires a supporting runtime or consumer polyfill).
+   * Failures are logged and the original error is rethrown.
+   */
+  public formatWeekdayToParts(
+    weekday: number,
+    options: WeekdayFormatOptions = {},
+  ): Intl.DateTimeFormatPart[] {
+    return this.#format("weekday-format-to-parts-failed", () =>
+      formatWeekdayParts(weekday, this.#language, options),
     );
   }
 

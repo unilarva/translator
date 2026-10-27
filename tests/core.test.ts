@@ -2062,7 +2062,7 @@ test("core types compile without ambient types and retain native abort/fetch com
     "bin/tsc",
   );
   try {
-    const imports = `import type { TranslationAbortSignal, TranslatorFetch, LanguageChangeEvent, LanguageRegistryChangeEvent } from ${JSON.stringify(types)};\nimport { Translator, formatNumberToParts, formatCurrencyToParts, formatRelativeTimeToParts } from ${JSON.stringify(index)};\n`;
+    const imports = `import type { TranslationAbortSignal, TranslatorFetch, LanguageChangeEvent, LanguageRegistryChangeEvent } from ${JSON.stringify(types)};\nimport { Translator, formatNumberToParts, formatCurrencyToParts, formatRelativeTimeToParts, formatDateToParts, formatTimeToParts, formatWeekdayToParts, type CalendarDate, type ClockTime, type DateFormatOptions, type TimeFormatOptions, type WeekdayFormatOptions } from ${JSON.stringify(index)};\n`;
     await writeFile(
       join(directory, "clean.ts"),
       `${imports}
@@ -2085,6 +2085,75 @@ test("core types compile without ambient types and retain native abort/fetch com
       const methodNumber: Intl.NumberFormatPart[] = translator.formatNumberToParts(1.25, { ...rounding, language: "fi" });
       const methodCurrency: Intl.NumberFormatPart[] = translator.formatCurrencyToParts(1.25, { ...rounding, currency: "EUR" });
       const methodRelative: Intl.RelativeTimeFormatPart[] = translator.formatRelativeTimeToParts(1, "weeks");
+      const calendar: CalendarDate = { year: 2026, month: 10, day: 3 };
+      const clock: ClockTime = { hour: 13, minute: 45, second: 0 };
+      const dateOptions: DateFormatOptions = { language: "fi", dateStyle: "long", timeZone: "UTC" };
+      const timeOptions: TimeFormatOptions = { language: "fi", timeStyle: "medium", hour12: false };
+      const weekdayOptions: WeekdayFormatOptions = { language: "fi", width: "short" };
+      const date: Intl.DateTimeFormatPart[] = formatDateToParts(calendar, "en", dateOptions);
+      const time: Intl.DateTimeFormatPart[] = formatTimeToParts(clock, "en", timeOptions);
+      const weekday: Intl.DateTimeFormatPart[] = formatWeekdayToParts(0, "en", weekdayOptions);
+      const methodDate: Intl.DateTimeFormatPart[] = translator.formatDateToParts(new Date(), dateOptions);
+      const methodTime: Intl.DateTimeFormatPart[] = translator.formatTimeToParts("13:45", timeOptions);
+      const methodWeekday: Intl.DateTimeFormatPart[] = translator.formatWeekdayToParts(6, weekdayOptions);
+      formatDateToParts(new Date(), "en");
+      formatDateToParts("2026-10-03", "en");
+      translator.formatDateToParts(calendar);
+      translator.formatDateToParts("2026-10-03");
+      formatTimeToParts("13:45:00", "en");
+      translator.formatTimeToParts(clock);
+      formatWeekdayToParts(6, "en");
+      translator.formatWeekdayToParts(0);
+      date.push({ type: "literal", value: "consumer-owned" });
+      time[0]!.value = "consumer-owned";
+      // @ts-expect-error Dates do not accept numeric timestamps.
+      formatDateToParts(0, "en");
+      // @ts-expect-error Calendar records require a day.
+      translator.formatDateToParts({ year: 2026, month: 10 });
+      // @ts-expect-error Clock inputs are not Date instants.
+      formatTimeToParts(new Date(), "en");
+      // @ts-expect-error Clock records require minutes.
+      translator.formatTimeToParts({ hour: 13 });
+      // @ts-expect-error Weekdays use numeric indices, not names.
+      formatWeekdayToParts("Monday", "en");
+      // @ts-expect-error Weekday methods do not coerce strings.
+      translator.formatWeekdayToParts("0");
+      // @ts-expect-error Clock parts forbid date styles.
+      formatTimeToParts(clock, "en", { dateStyle: "short" });
+      // @ts-expect-error Clock parts forbid eras.
+      translator.formatTimeToParts(clock, { era: "short" });
+      // @ts-expect-error Clock parts forbid years.
+      formatTimeToParts(clock, "en", { year: "numeric" });
+      // @ts-expect-error Clock parts forbid months.
+      translator.formatTimeToParts(clock, { month: "long" });
+      // @ts-expect-error Clock parts forbid days.
+      formatTimeToParts(clock, "en", { day: "numeric" });
+      // @ts-expect-error Clock parts forbid weekdays.
+      translator.formatTimeToParts(clock, { weekday: "long" });
+      // @ts-expect-error Clock parts forbid time zones.
+      formatTimeToParts(clock, "en", { timeZone: "UTC" });
+      // @ts-expect-error Clock parts forbid zone names.
+      translator.formatTimeToParts(clock, { timeZoneName: "short" });
+      // @ts-expect-error Long clock styles include a zone.
+      formatTimeToParts(clock, "en", { timeStyle: "long" });
+      // @ts-expect-error Full clock styles include a zone.
+      translator.formatTimeToParts(clock, { timeStyle: "full" });
+      // @ts-expect-error Weekday width is a closed union.
+      formatWeekdayToParts(0, "en", { width: "wide" });
+      // @ts-expect-error Weekday options do not expose native date fields.
+      translator.formatWeekdayToParts(0, { year: "numeric" });
+      // @ts-expect-error Date helpers return parts arrays, not strings.
+      const wrongDate: string = formatDateToParts(calendar, "en");
+      // @ts-expect-error Date methods return parts arrays, not strings.
+      const wrongMethodDate: string = translator.formatDateToParts(calendar);
+      // @ts-expect-error Clock helpers return parts arrays, not strings.
+      const wrongTime: string = formatTimeToParts(clock, "en");
+      // @ts-expect-error Clock methods return parts arrays, not strings.
+      const wrongMethodTime: string = translator.formatTimeToParts(clock);
+      // @ts-expect-error Weekday helpers return parts arrays, not strings.
+      const wrongWeekday: string = formatWeekdayToParts(0, "en");
+      // @ts-expect-error Weekday methods return parts arrays, not strings.
+      const wrongMethodWeekday: string = translator.formatWeekdayToParts(0);
       for (const part of relative) {
         if (part.type !== "literal") {
           const unit: Intl.RelativeTimeFormatUnitSingular = part.unit;

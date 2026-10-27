@@ -38,7 +38,6 @@ This document is for package maintainers. Consumer setup and behavior belong in
 - [Development](#development)
 - [Adding Or Changing Features](#adding-or-changing-features)
 - [Future Enhancements](#future-enhancements)
-  - [Intl Formatting Parts](#intl-formatting-parts)
   - [Intl Formatting Ranges](#intl-formatting-ranges)
   - [Inserted Markup Observation](#inserted-markup-observation)
   - [JSON-To-Key Declaration Generation](#json-to-key-declaration-generation)
@@ -158,9 +157,10 @@ message compilation, runtime dependencies, or DOM markers for these helpers. Con
 message keys from categories must align the rule language with the resolved message language;
 ordinary translation fallback does not guarantee that alignment.
 
-`formatNumberToParts()`, `formatCurrencyToParts()`, and `formatRelativeTimeToParts()` expose native
-`formatToParts` results through root exports and matching Translator methods. Reuse existing
-family-specific option types, strict finite-number validation, locale/default rules, currency style
+`formatNumberToParts()`, `formatCurrencyToParts()`, `formatRelativeTimeToParts()`, `formatDateToParts()`,
+`formatTimeToParts()`, and `formatWeekdayToParts()` expose native `formatToParts` results through root
+exports and matching Translator methods. The latter three return `Intl.DateTimeFormatPart[]`. Reuse
+existing family-specific option types, strict numeric validation, locale/default rules, currency style
 and uppercase code normalization. Preserve native relative-time unit/option reads rather than
 homogenizing them with number option snapshots. Share bounded formatter caches with string calls
 when effective options match; cache neither inputs nor results. Arrays and their records are fresh,
@@ -168,10 +168,22 @@ mutable, caller-owned native results, not frozen snapshots. Preserve native orde
 relative-time literal parts may lack `unit`. Do not tokenize strings, generate HTML, claim safe HTML,
 or add DOM markers. Existing string methods retain their return types.
 
+Date, clock-time, and weekday string/parts calls share parsing, effective option preparation, and
+the bounded date-time formatter cache. Preserve calendar-only UTC anchoring versus Date instant
+zones, detaching cross-realm Dates through native slots before option coercion can mutate inputs.
+Instants without an explicit zone continue bypassing caching because the host zone can change.
+Retain numeric date defaults unless a date/time style is set, clock seconds-presence defaults
+(including explicit zero), all forbidden clock fields even when explicitly undefined, short/medium
+clock styles only, and Monday `0` through Sunday `6` numbering with default long weekday width.
+Clock parts must never expose synthetic date fields or a zone label. Compare results against the
+native parts operation, not joined string output: DateTimeFormat string and parts literals can
+differ in whitespace.
+
 Check the requested native `formatToParts` method only at call time, never during module import.
 A missing method throws an actionable `TypeError` naming the method and requiring a supporting host
-or consumer-provided polyfill. Do not install polyfills or add string fallbacks; unsupported methods
-must not break imports or unrelated operations. Formatting uses active/explicit locales, never catalog
+or consumer-provided polyfill. Date, clock-time, and weekday parts require
+`Intl.DateTimeFormat.prototype.formatToParts`. Do not install polyfills or add string fallbacks;
+unsupported methods must not break imports or unrelated operations. Formatting uses active/explicit locales, never catalog
 fallback, and does not change translator settings or emit language, catalog, or registry events.
 
 ### `src/rich-text.ts`
@@ -470,8 +482,9 @@ extras. Preserve the previous details shape when extras are absent.
 
 Translator relative-time and plural-selection methods log `relative-time-format-failed` and
 `plural-select-failed`, respectively, with the original error, then rethrow that same error.
-Parts methods use `number-format-to-parts-failed`, `currency-format-to-parts-failed`, and
-`relative-time-format-to-parts-failed`. Standalone helpers throw without logging; methods use the
+Parts methods use `number-format-to-parts-failed`, `currency-format-to-parts-failed`,
+`relative-time-format-to-parts-failed`, `date-format-to-parts-failed`, `time-format-to-parts-failed`, and
+`weekday-format-to-parts-failed`. Standalone helpers throw without logging; methods use the
 safe adapter and rethrow the identical error, including option-coercion and missing-native-method
 failures. Preserve existing diagnostic events and detail shapes for string methods.
 
@@ -583,26 +596,15 @@ points rather than changing current return types, event semantics, grammar, or c
 
 | Order | Candidate                           | Importance / implementation gate                  | Complexity  | Public contract addition                  |
 | ----- | ----------------------------------- | ------------------------------------------------- | ----------- | ----------------------------------------- |
-| 1     | Remaining Intl formatting parts     | Date, clock-time, and weekday follow-up           | Low-medium  | Helpers, methods, and native parts types  |
-| 2     | Intl formatting ranges              | Natural follow-up; can ship separately            | Medium      | Range inputs, results, runtime support    |
-| 3     | Inserted markup observation         | High for dynamic imperative DOM when needed       | Medium-high | Opt-in scheduling and binding lifecycle   |
-| 4     | JSON-to-key declaration generation  | When external JSON makes typed keys inconvenient  | Medium      | Separate tooling inputs and output        |
-| 5     | Stable reactive snapshots           | Design from a concrete framework/SSR integration  | Medium-high | Stable identity and comprehensive events  |
-| 6     | One framework adapter               | When a target framework integration is required   | Medium      | Adapter lifecycle and SSR/hydration       |
-| 7     | Compiled plural and select messages | High i18n value; promote when messages require it | High        | Separate evaluation and compiled catalogs |
-| 8     | Source key extraction               | Separate tooling project with defined languages   | High        | Source syntax and dynamic-key policy      |
-| 9     | Broader rich-text grammar           | Only with a concrete grammar requirement          | High        | Opt-in grammar and node/renderer types    |
-| 10    | Asynchronous rendering              | Only when synchronous rendering is insufficient   | High        | Separate async lifecycle and completion   |
-
-### Intl Formatting Parts
-
-Number, currency, and relative-time parts are available. Date, clock-time, and weekday parts remain
-unimplemented: add named helpers and matching Translator methods returning native
-`Intl.DateTimeFormatPart[]` without changing existing string return types. Preserve fresh mutable
-ownership, calendar/clock/instant distinctions, locale-data dependence, and bounded-cache/coercion
-behavior; clock parts must never expose their synthetic date or zone. Retain the documented ES2023
-Intl declaration baseline, DOM/Node-ambient-free root, and call-time capability diagnostics. Parts
-are not HTML: consumers still own safe rendering. No DOM markers are planned.
+| 1     | Intl formatting ranges              | Natural follow-up; can ship separately            | Medium      | Range inputs, results, runtime support    |
+| 2     | Inserted markup observation         | High for dynamic imperative DOM when needed       | Medium-high | Opt-in scheduling and binding lifecycle   |
+| 3     | JSON-to-key declaration generation  | When external JSON makes typed keys inconvenient  | Medium      | Separate tooling inputs and output        |
+| 4     | Stable reactive snapshots           | Design from a concrete framework/SSR integration  | Medium-high | Stable identity and comprehensive events  |
+| 5     | One framework adapter               | When a target framework integration is required   | Medium      | Adapter lifecycle and SSR/hydration       |
+| 6     | Compiled plural and select messages | High i18n value; promote when messages require it | High        | Separate evaluation and compiled catalogs |
+| 7     | Source key extraction               | Separate tooling project with defined languages   | High        | Source syntax and dynamic-key policy      |
+| 8     | Broader rich-text grammar           | Only with a concrete grammar requirement          | High        | Opt-in grammar and node/renderer types    |
+| 9     | Asynchronous rendering              | Only when synchronous rendering is insufficient   | High        | Separate async lifecycle and completion   |
 
 ### Intl Formatting Ranges
 

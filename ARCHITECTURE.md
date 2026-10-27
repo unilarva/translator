@@ -233,7 +233,25 @@ prohibitions, including inherited/undefined fields and long/full styles. Test na
 for synthetic date/zone leakage before extending their contract; never silently filter parts or
 invent localized text. Range parts preserve fresh mutable ownership, order, literals and native
 source metadata. Equal ranges can have native string/parts whitespace differences. No result
-caching, DOM markers, relative-time/weekday ranges or plural-range selection is added.
+caching, DOM markers, relative-time ranges or plural-range selection is added.
+
+`formatWeekdayRange()` and `formatWeekdayRangeToParts()` are root exports with matching Translator
+methods and the existing WeekdayFormatOptions. Validate both endpoints as integers Monday `0`
+through Sunday `6` without coercion, preparing both anchors before observing options. Reuse the
+single-weekday zone/language/width read order, long-width default, bounded date-time cache and
+unsafe-coercion bypass policy. Forbid zone fields by presence even when inherited/non-enumerable or
+undefined. The semantic interval is an inclusive recurring contiguous forward weekly span: anchor
+Monday to `1970-01-05` UTC and add seven days to a descending end. Equal endpoints mean one weekday,
+not a full week. These are neither real dates nor durations or arbitrary day sets; schedule grouping,
+exceptions and occurrence generation remain consumer-owned.
+
+Delegate directly to the requested native range operation, including equality; never concatenate
+weekday labels, choose punctuation, filter parts, or disambiguate native narrow labels. Preserve
+byte-for-byte native strings for the prepared inputs/options and direct fresh mutable caller-owned
+`Intl.DateTimeRangeFormatPart[]` arrays/records, including literals, order and source metadata. Do not
+cache endpoints/results or assume joined parts reproduce native string whitespace. Core weekday
+ranges add no DOM markers; field-based DOM ranges and datetime DOM ranges remain separate planned
+work, with the existing five single-value formatting kinds unchanged.
 
 Check the requested native `formatToParts`, `formatRange`, or `formatRangeToParts` method only at
 call time, never during module import.
@@ -241,7 +259,7 @@ A missing method throws an actionable `TypeError` naming the method and requirin
 or consumer-provided polyfill. Calendar, datetime, clock-time, and weekday parts require
 `Intl.DateTimeFormat.prototype.formatToParts`. Numeric range strings require only
 `Intl.NumberFormat.prototype.formatRange`; numeric range parts require only
-`Intl.NumberFormat.prototype.formatRangeToParts`. Calendar/datetime/clock range strings and parts require only
+`Intl.NumberFormat.prototype.formatRangeToParts`. Calendar/datetime/clock/weekday range strings and parts require only
 the corresponding `Intl.DateTimeFormat.prototype.formatRange` or `formatRangeToParts` method.
 Name the exact missing method in the error;
 absence of one range method must not disable the other or ordinary string/single-value parts calls.
@@ -559,6 +577,8 @@ or registry events.
 Datetime methods use `datetime-format-failed`, `datetime-format-to-parts-failed`,
 `datetime-range-format-failed`, and `datetime-range-format-to-parts-failed`, preserving original
 error identity even when logging fails. Calendar methods retain existing date event names.
+Weekday range methods use `weekday-range-format-failed` and
+`weekday-range-format-to-parts-failed` through that same safe adapter and preserve identical errors.
 Preserve existing diagnostic events and detail shapes for existing string methods.
 
 Subscriber and logger callbacks run synchronously and are never awaited. Observe accidental returned
@@ -609,6 +629,18 @@ original error identity. Source and installed fixtures cover every helper/method
 date-time range method before import to verify independent call-time diagnostics. CI runs the full
 gate on minimum/release Node; browser Intl smoke coverage must be verified separately or recorded as
 unperformed rather than inferred from declarations or Node results.
+
+Weekday range tests use each corresponding native operation as the oracle with Monday `1970-01-05`
+UTC and end-plus-seven anchoring for wraps. Cover all 49 endpoint pairs, all three widths, representative
+locales, equality, wrap, both endpoint validations and forbidden own/inherited/undefined zone fields.
+Probe strings and parts for synthetic calendar/zone leakage on minimum/release Node and supported
+browser engines; stop and record the exact engine/locale/options/endpoints/output counterexample
+before redesigning if leakage occurs. Do not silently sanitize native output. Check fresh array/record
+ownership, literals/source metadata, cache sharing/eviction and unsafe coercions, option read order,
+locale overrides, no state events, original error identity and failing loggers. Source, built and
+clean installed-consumer runtime/type fixtures must exercise both helpers and methods; remove each
+native range method independently before import and with warm caches to verify precise call-time
+diagnostics without disabling unrelated operations. Browser coverage is separate from Happy DOM.
 
 Tests that deliberately model hostile or malformed input are contract tests, not incidental edge
 cases. Preserve them when refactoring parsing or rendering.

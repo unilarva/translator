@@ -8,10 +8,11 @@
   or display components are defined. Weekday APIs also reject zone options. See the usage guide
   for migration; no compatibility overloads are retained.
 - Add native structured parts for numbers, currencies, relative times, calendars, datetimes, clocks,
-  and weekdays, plus number/currency/calendar/datetime/clock ranges, through helpers and Translator
-  methods. Parts are fresh and caller-owned; range parts preserve native source metadata. Clock ranges use
-  same-day ordering and pair-aware seconds. Unsupported native operations fail only when called,
-  without affecting imports or unrelated formatting. No new DOM markers or weekday ranges are added.
+  and weekdays, plus number/currency/calendar/datetime/clock/weekday ranges, through helpers and
+  Translator methods. Parts are fresh and caller-owned with native range source metadata. Clock
+  ranges use same-day ordering and pair-aware seconds; recurring contiguous weekday spans wrap
+  forward through Sunday, with equal endpoints meaning one weekday. Unsupported native operations
+  fail only when called, without affecting imports or unrelated formatting. No new DOM markers.
 - Require TypeScript `ES2023` libraries, or `ES2022` plus `ES2023.Intl`, instead of ES2022 alone.
   Root declarations remain DOM-free; the JavaScript target stays ES2022 and the Node minimum stays
   `22.13.0`.

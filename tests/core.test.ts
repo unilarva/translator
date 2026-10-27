@@ -2122,15 +2122,15 @@ test("core types compile without ambient types and retain native abort/fetch com
         `;
         })
         .join("\n")}
-      ${["", "ToParts"]
+      ${["", "ToParts", "Range", "RangeToParts"]
         .map(suffix =>
           ["timeZone", "timeZoneName"]
             .map(
               key => `
       // @ts-expect-error Weekdays forbid zones.
-      temporal.formatWeekday${suffix}(0, "en", { ${key}: "UTC" });
+      temporal.formatWeekday${suffix}(${suffix.startsWith("Range") ? "0, 6" : "0"}, "en", { ${key}: "UTC" });
       // @ts-expect-error Weekday methods forbid zones.
-      new temporal.Translator().formatWeekday${suffix}(0, { ${key}: "UTC" });`,
+      new temporal.Translator().formatWeekday${suffix}(${suffix.startsWith("Range") ? "0, 6" : "0"}, { ${key}: "UTC" });`,
             )
             .join("\n"),
         )
@@ -2329,6 +2329,47 @@ test("core types compile without ambient types and retain native abort/fetch com
       const methodDate: Intl.DateTimeFormatPart[] = translator.formatDateToParts(calendar, dateOptions);
       const methodTime: Intl.DateTimeFormatPart[] = translator.formatTimeToParts("13:45", timeOptions);
       const methodWeekday: Intl.DateTimeFormatPart[] = translator.formatWeekdayToParts(6, weekdayOptions);
+      ${["Range", "RangeToParts"]
+        .map(
+          suffix => `
+      const weekday${suffix}: ${suffix === "Range" ? "string" : "Intl.DateTimeRangeFormatPart[]"} = temporal.formatWeekday${suffix}(4, 0, "en", weekdayOptions);
+      const methodWeekday${suffix}: ${suffix === "Range" ? "string" : "Intl.DateTimeRangeFormatPart[]"} = translator.formatWeekday${suffix}(6, 6, weekdayOptions);
+      temporal.formatWeekday${suffix}(0, 6, "en");
+      translator.formatWeekday${suffix}(4, 0);
+      // @ts-expect-error Weekday ranges require numeric starts.
+      temporal.formatWeekday${suffix}("0", 6, "en");
+      // @ts-expect-error Weekday ranges require numeric ends.
+      temporal.formatWeekday${suffix}(0, "6", "en");
+      // @ts-expect-error Weekday method ranges require numeric starts.
+      translator.formatWeekday${suffix}(new Date(), 6);
+      // @ts-expect-error Weekday method ranges require numeric ends.
+      translator.formatWeekday${suffix}(0, { day: 6 });
+      // @ts-expect-error Standalone weekday ranges require a language.
+      temporal.formatWeekday${suffix}(0, 6);
+      // @ts-expect-error Weekday methods require both endpoints.
+      translator.formatWeekday${suffix}(0);
+      // @ts-expect-error Weekday range widths retain native choices.
+      temporal.formatWeekday${suffix}(0, 6, "en", { width: "wide" });
+      // @ts-expect-error Weekday range method widths retain native choices.
+      translator.formatWeekday${suffix}(0, 6, { width: "wide" });
+      // @ts-expect-error Weekday range options do not expose synthetic date fields.
+      temporal.formatWeekday${suffix}(0, 6, "en", { year: "numeric" });
+      // @ts-expect-error Weekday range options do not expose synthetic clock fields.
+      translator.formatWeekday${suffix}(0, 6, { hour: "numeric" });
+      // @ts-expect-error Weekday range return forms remain distinct.
+      const wrongWeekday${suffix}: ${suffix === "Range" ? "Intl.DateTimeRangeFormatPart[]" : "string"} = temporal.formatWeekday${suffix}(0, 6, "en");
+      // @ts-expect-error Weekday method range return forms remain distinct.
+      const wrongMethodWeekday${suffix}: ${suffix === "Range" ? "Intl.DateTimeRangeFormatPart[]" : "string"} = translator.formatWeekday${suffix}(0, 6);
+      `,
+        )
+        .join("\n")}
+      weekdayRangeToParts.push({ type: "weekday", value: "consumer-owned", source: "shared" });
+      methodWeekdayRangeToParts[0]!.value = "consumer-owned";
+      for (const part of weekdayRangeToParts) {
+        const source: "startRange" | "endRange" | "shared" = part.source;
+      }
+      // @ts-expect-error Native range source metadata remains required.
+      weekdayRangeToParts.push({ type: "weekday", value: "missing source" });
       // @ts-expect-error Calendar helpers reject Date instants.
       formatDateToParts(new Date(), "en");
       formatDateToParts("2026-10-03", "en");

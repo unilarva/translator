@@ -60,6 +60,8 @@ import {
   formatTimeRangeToParts as formatTimeRangeParts,
   formatTimeToParts as formatTimeParts,
   formatWeekday as formatWeekdayValue,
+  formatWeekdayRange as formatWeekdayRangeValue,
+  formatWeekdayRangeToParts as formatWeekdayRangeParts,
   formatWeekdayToParts as formatWeekdayParts,
   selectPlural as selectPluralValue,
   type CalendarDate,
@@ -1556,6 +1558,51 @@ export class Translator {
   ): Intl.DateTimeFormatPart[] {
     return this.#format("weekday-format-to-parts-failed", () =>
       formatWeekdayParts(weekday, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats a forward inclusive recurring weekday span using the active language or options.language.
+   * @param start - Integer from 0 (Monday) through 6 (Sunday), without coercion.
+   * @param end - Monday-zero integer; descending pairs wrap through Sunday, equality means one weekday.
+   * @param options - Name width (default long) and locale override; zone fields are forbidden even
+   * when inherited or undefined. Native narrow labels may be ambiguous.
+   * @returns Native weekday-only range text, not dates/duration; grouping days and schedule rules
+   * remain application-owned. No custom separators, endpoint collapse or zone conversion occurs.
+   * @throws RangeError for invalid indices/locale/width or forbidden zones; TypeError for native
+   * coercion errors or missing Intl.DateTimeFormat formatRange support (use a supporting runtime or
+   * consumer polyfill). Failures log weekday-range-format-failed and rethrow the identical error.
+   */
+  public formatWeekdayRange(
+    start: number,
+    end: number,
+    options: WeekdayFormatOptions = {},
+  ): string {
+    return this.#format("weekday-range-format-failed", () =>
+      formatWeekdayRangeValue(start, end, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats recurring weekday range parts using the active language or options.language override.
+   * @param start - Integer from 0 (Monday) through 6 (Sunday), without coercion.
+   * @param end - Monday-zero integer; descending pairs wrap through Sunday, equality means one weekday.
+   * @param options - Width (default long) and locale override; zone fields are forbidden even when
+   * inherited or undefined. Native narrow-label ambiguity is preserved; schedule grouping is application-owned.
+   * @returns Fresh caller-owned mutable native parts/records preserving order, literals and
+   * startRange/endRange/shared sources, without synthetic date/zone fields or HTML. Joined parts may
+   * differ from string whitespace; equal endpoints still use the native range operation.
+   * @throws RangeError for invalid indices/locale/width or forbidden zones; TypeError for native
+   * coercion errors or missing Intl.DateTimeFormat formatRangeToParts support (use a supporting runtime
+   * or consumer polyfill). Failures log weekday-range-format-to-parts-failed and rethrow the identical error.
+   */
+  public formatWeekdayRangeToParts(
+    start: number,
+    end: number,
+    options: WeekdayFormatOptions = {},
+  ): Intl.DateTimeRangeFormatPart[] {
+    return this.#format("weekday-range-format-to-parts-failed", () =>
+      formatWeekdayRangeParts(start, end, this.#language, options),
     );
   }
 

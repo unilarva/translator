@@ -116,7 +116,7 @@ export type TimeFormatOptions = Omit<
   timeStyle?: "short" | "medium";
 } & LocaleFormatOptions;
 
-/** Weekday formatting width and optional language override. */
+/** Single-weekday and recurring weekday-range width and optional language override. */
 export interface WeekdayFormatOptions extends LocaleFormatOptions {
   /** Localized name width; defaults to `long`. */
   width?: "long" | "short" | "narrow";
@@ -1160,24 +1160,33 @@ export function formatWeekday(
 
 /** Shares weekday validation, UTC anchoring, width defaults, and formatter caching across result forms. */
 function prepareWeekday(weekday: number, language: string, options: WeekdayFormatOptions) {
+  const date = weekdayDate(weekday);
+  return { formatter: weekdayFormatter(language, options), date };
+}
+
+/** Validates a Monday-zero index without coercion and anchors it to a private UTC week. */
+function weekdayDate(weekday: number): Date {
   if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
     throw new RangeError("Weekday must be an integer from 0 (Monday) through 6 (Sunday)");
   }
+  return new Date(Date.UTC(1970, 0, 5 + weekday));
+}
+
+/** Retains single-weekday zone checks and language/width reads for all weekday operations. */
+function weekdayFormatter(language: string, options: WeekdayFormatOptions): Intl.DateTimeFormat {
   for (const option of ["timeZone", "timeZoneName"] as const) {
     if (option in options) throw new RangeError(`Weekday formatting does not support ${option}`);
   }
-  const date = new Date(Date.UTC(1970, 0, 5 + weekday));
   const tag = locale(options.language ?? language);
   const formatOptions: Intl.DateTimeFormatOptions = {
     weekday: options.width ?? "long",
     timeZone: "UTC",
   };
-  const formatter = cachedFormatter(
+  return cachedFormatter(
     dateTimeFormatters,
     formatterKey(tag, formatOptions),
     () => new Intl.DateTimeFormat(tag, formatOptions),
   );
-  return { formatter, date };
 }
 
 /**
@@ -1197,4 +1206,64 @@ export function formatWeekdayToParts(
 ): Intl.DateTimeFormatPart[] {
   const { formatter, date } = prepareWeekday(weekday, language, options);
   return dateTimeParts(formatter, date);
+}
+
+/** Validates both indices before option reads; descending endpoints wrap forward through Sunday. */
+function prepareWeekdayRange(
+  start: number,
+  end: number,
+  language: string,
+  options: WeekdayFormatOptions,
+) {
+  const first = weekdayDate(start);
+  const last = weekdayDate(end);
+  if (end < start) last.setUTCDate(last.getUTCDate() + 7);
+  return { formatter: weekdayFormatter(language, options), start: first, end: last };
+}
+
+/**
+ * Formats a forward inclusive recurring weekday span, not real dates or an elapsed duration.
+ * @param start - Integer from 0 (Monday) through 6 (Sunday), without coercion.
+ * @param end - Monday-zero integer; descending pairs wrap through Sunday, equality means one weekday.
+ * @param language - Locale tag unless options.language overrides it; no translation fallback.
+ * @param options - Name width (default long) and locale override. Zone fields are forbidden even
+ * when inherited or undefined; narrow labels can be ambiguous and retain native semantics.
+ * @returns Native range text without package-selected punctuation, endpoint collapse or zone conversion.
+ * Grouping noncontiguous days and schedule rules remain application-owned.
+ * @throws {RangeError} If either index, locale or width is invalid, or a zone field is present.
+ * @throws {TypeError} If Intl rejects coercion, or Intl.DateTimeFormat.prototype.formatRange
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatWeekdayRange(
+  start: number,
+  end: number,
+  language: string,
+  options: WeekdayFormatOptions = {},
+): string {
+  const pair = prepareWeekdayRange(start, end, language, options);
+  return dateTimeRange(pair.formatter, pair.start, pair.end);
+}
+
+/**
+ * Formats a forward inclusive recurring weekday span as native structured range parts.
+ * @param start - Integer from 0 (Monday) through 6 (Sunday), without coercion.
+ * @param end - Monday-zero integer; descending pairs wrap through Sunday, equality means one weekday.
+ * @param language - Locale tag unless options.language overrides it; no translation fallback.
+ * @param options - Width (default long) and locale override; zone fields are forbidden even if
+ * inherited or undefined. Native narrow-label ambiguity is preserved; schedule grouping is application-owned.
+ * @returns Fresh caller-owned mutable native parts/records preserving order, literals and
+ * startRange/endRange/shared sources, without synthetic date/zone fields or HTML. Joined parts
+ * may differ from string whitespace; equal endpoints still use the native range operation.
+ * @throws {RangeError} If either index, locale or width is invalid, or a zone field is present.
+ * @throws {TypeError} If Intl rejects coercion, or Intl.DateTimeFormat.prototype.formatRangeToParts
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatWeekdayRangeToParts(
+  start: number,
+  end: number,
+  language: string,
+  options: WeekdayFormatOptions = {},
+): Intl.DateTimeRangeFormatPart[] {
+  const pair = prepareWeekdayRange(start, end, language, options);
+  return dateTimeRangeParts(pair.formatter, pair.start, pair.end);
 }

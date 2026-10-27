@@ -369,6 +369,212 @@ function assertDateTimeRanges(api, translator) {
 
 assertDateTimeRanges(core, translator);
 
+/** Checks recurring weekday ranges, native metadata, ownership and isolated failures. */
+function assertWeekdayRanges(api, translator) {
+  for (const language of ["en-US", "fi-FI", "pt-BR", "ja-JP", "ar-EG", "th-TH"])
+    for (const width of ["long", "short", "narrow"])
+      for (let start = 0; start < 7; start++)
+        for (let end = 0; end < 7; end++) {
+          const nativeStart = new Date(Date.UTC(1970, 0, 5 + start));
+          const nativeEnd = new Date(Date.UTC(1970, 0, 5 + end + (end < start ? 7 : 0)));
+          const native = new Intl.DateTimeFormat(language, { weekday: width, timeZone: "UTC" });
+          const options = { width, language };
+          const text = native.formatRange(nativeStart, nativeEnd);
+          const parts = native.formatRangeToParts(nativeStart, nativeEnd);
+          assert.ok(
+            parts.every(part => ["weekday", "literal"].includes(part.type)),
+            JSON.stringify({ language, width, start, end, text, parts }),
+          );
+          for (const format of [
+            () => api.formatWeekdayRange(start, end, "en", options),
+            () => translator.formatWeekdayRange(start, end, options),
+          ])
+            assert.equal(format(), text);
+          for (const format of [
+            () => api.formatWeekdayRangeToParts(start, end, "en", options),
+            () => translator.formatWeekdayRangeToParts(start, end, options),
+          ]) {
+            const first = format();
+            const second = format();
+            assert.deepEqual(first, parts);
+            assert.deepEqual(second, parts);
+            assert.notStrictEqual(first, second);
+            assert.equal(Object.isFrozen(first), false);
+            first.forEach((part, index) => {
+              assert.ok(["startRange", "endRange", "shared"].includes(part.source));
+              assert.notStrictEqual(part, second[index]);
+              assert.equal(Object.isFrozen(part), false);
+              part.value = "consumer mutation";
+              part.source = part.source === "shared" ? "startRange" : "shared";
+            });
+            first.push({ type: "literal", value: "consumer-owned", source: "shared" });
+            first.length = 0;
+            assert.deepEqual(second, parts);
+            assert.deepEqual(format(), parts);
+          }
+        }
+  const native = new Intl.DateTimeFormat("en", { weekday: "long", timeZone: "UTC" });
+  const monday = new Date(Date.UTC(1970, 0, 5));
+  const friday = new Date(Date.UTC(1970, 0, 9));
+  assert.equal(api.formatWeekdayRange(0, 4, "en"), native.formatRange(monday, friday));
+  assert.equal(translator.formatWeekdayRange(0, 4), native.formatRange(monday, friday));
+  assert.deepEqual(
+    api.formatWeekdayRangeToParts(0, 4, "en"),
+    native.formatRangeToParts(monday, friday),
+  );
+  assert.deepEqual(
+    translator.formatWeekdayRangeToParts(0, 4),
+    native.formatRangeToParts(monday, friday),
+  );
+  for (const suffix of ["Range", "RangeToParts"]) {
+    const method = "formatWeekday" + suffix;
+    for (const format of [
+      (start, end, options) => api[method](start, end, "en", options),
+      (start, end, options) => translator[method](start, end, options),
+    ]) {
+      for (const invalid of [
+        -1,
+        7,
+        0.5,
+        NaN,
+        Infinity,
+        -Infinity,
+        "0",
+        0n,
+        null,
+        undefined,
+        {},
+        new Number(0),
+      ]) {
+        assert.throws(() => format(invalid, 4), RangeError);
+        assert.throws(() => format(0, invalid), RangeError);
+      }
+      assert.throws(() => format(0, 4, { width: "wide" }), RangeError);
+      assert.throws(() => format(0, 4, { language: "!" }), RangeError);
+      for (const key of ["timeZone", "timeZoneName"])
+        for (const value of [undefined, key === "timeZone" ? "UTC" : "short"])
+          for (const options of [{ [key]: value }, Object.create({ [key]: value })])
+            assert.throws(() => format(0, 4, options), RangeError);
+    }
+    const failure = new Error("weekday option failure");
+    const options = {
+      get width() {
+        throw failure;
+      },
+    };
+    const logs = [];
+    const events = [];
+    const isolated = new api.Translator({
+      language: "fi",
+      fallbackLanguage: "en",
+      logger: entry => {
+        logs.push(entry);
+        throw new Error("logger failure");
+      },
+    });
+    isolated.subscribe(event => events.push(event));
+    isolated.subscribeCatalog(event => events.push(event));
+    const locale = new Intl.DateTimeFormat("fi", { weekday: "long", timeZone: "UTC" });
+    const expected = locale["format" + suffix](monday, friday);
+    assert.deepEqual(isolated[method](0, 4), expected);
+    assert.deepEqual(api[method](0, 4, "fi"), expected);
+    let width = "long";
+    const coercible = { width: { toString: () => width } };
+    for (width of ["long", "short", "narrow", "long"]) {
+      const expected = new Intl.DateTimeFormat("en", { weekday: width, timeZone: "UTC" })[
+        "format" + suffix
+      ](monday, friday);
+      assert.deepEqual(api[method](0, 4, "en", coercible), expected);
+      assert.deepEqual(translator[method](0, 4, coercible), expected);
+    }
+    assert.throws(
+      () => api[method](0, 4, "en", options),
+      error => error === failure,
+    );
+    assert.equal(logs.length, 0);
+    assert.throws(
+      () => isolated[method](0, 4, options),
+      error => error === failure,
+    );
+    assert.equal(logs.length, 1);
+    assert.equal(
+      logs[0].event,
+      suffix === "Range" ? "weekday-range-format-failed" : "weekday-range-format-to-parts-failed",
+    );
+    assert.equal(isolated.getLanguage(), "fi");
+    assert.deepEqual(events, []);
+  }
+}
+
+assertWeekdayRanges(core, translator);
+
+/** Probes one unavailable weekday range operation before import or with a warm cache. */
+async function assertWeekdayCapabilities(entry, missing, warm) {
+  const prototype = Intl.DateTimeFormat.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, missing);
+  const native = new Intl.DateTimeFormat("en", { weekday: "long", timeZone: "UTC" });
+  const friday = new Date(Date.UTC(1970, 0, 9));
+  const monday = new Date(Date.UTC(1970, 0, 12));
+  const suffixes = ["", "ToParts", "Range", "RangeToParts"];
+  const expected = Object.fromEntries(
+    suffixes.map(suffix => [
+      suffix,
+      native["format" + suffix](...(suffix.startsWith("Range") ? [friday, monday] : [friday])),
+    ]),
+  );
+  let api;
+  let translator;
+  const logs = [];
+  const load = async () => {
+    api = await import(entry);
+    translator = new api.Translator({ language: "en", logger: entry => logs.push(entry) });
+  };
+  if (warm) {
+    await load();
+    for (const suffix of suffixes) {
+      const values = suffix.startsWith("Range") ? [4, 0] : [4];
+      api["formatWeekday" + suffix](...values, "en");
+      translator["formatWeekday" + suffix](...values);
+    }
+  }
+  Object.defineProperty(prototype, missing, { configurable: true, value: undefined });
+  try {
+    if (!api) await load();
+    for (const suffix of suffixes) {
+      const values = suffix.startsWith("Range") ? [4, 0] : [4];
+      for (const call of [
+        () => api["formatWeekday" + suffix](...values, "en"),
+        () => translator["formatWeekday" + suffix](...values),
+      ]) {
+        if ("format" + suffix === missing)
+          assert.throws(
+            call,
+            error =>
+              error instanceof TypeError &&
+              error.message.includes("Intl.DateTimeFormat.prototype." + missing) &&
+              /runtime|polyfill/i.test(error.message),
+          );
+        else assert.deepEqual(call(), expected[suffix]);
+      }
+    }
+    assert.equal(typeof api.formatNumberRange(1, 2, "en"), "string");
+    assert.ok(translator.formatNumberRangeToParts(1, 2).length > 0);
+    assert.equal(typeof api.formatDate("2026-10-03", "en"), "string");
+    assert.ok(translator.formatDateToParts("2026-10-03").length > 0);
+    assert.equal(typeof translator.formatTime("13:45"), "string");
+    assert.ok(api.formatTimeToParts("13:45", "en").length > 0);
+    assert.equal(logs.length, 1);
+    assert.equal(
+      logs[0].event,
+      missing === "formatRange"
+        ? "weekday-range-format-failed"
+        : "weekday-range-format-to-parts-failed",
+    );
+  } finally {
+    Object.defineProperty(prototype, missing, descriptor);
+  }
+}
+
 /** Verifies the breaking temporal split, explicit zones, defaults and native result ownership. */
 function assertDateTimeContract(api, translator) {
   const start = new Date("2026-09-30T23:30:00Z");
@@ -562,15 +768,65 @@ function temporalConsumerSource(entry) {
       `;
       })
       .join("\n")}
-    ${["", "ToParts"]
+    ${["Range", "RangeToParts"]
+      .map(suffix => {
+        const result = suffix.endsWith("ToParts") ? "Intl.DateTimeRangeFormatPart[]" : "string";
+        const wrong = suffix.endsWith("ToParts") ? "string" : "Intl.DateTimeRangeFormatPart[]";
+        return `
+    const weekdayOptions${suffix}: temporal.WeekdayFormatOptions = { width: "short", language: "fi" };
+    const weekday${suffix}: ${result} = temporal.formatWeekday${suffix}(4, 0, "en", weekdayOptions${suffix});
+    const methodWeekday${suffix}: ${result} = translator.formatWeekday${suffix}(0, 0, weekdayOptions${suffix});
+    temporal.formatWeekday${suffix}(0, 6, "en");
+    translator.formatWeekday${suffix}(0, 6);
+    // @ts-expect-error Weekday range helpers return the exact declared result family.
+    const wrongWeekday${suffix}: ${wrong} = temporal.formatWeekday${suffix}(0, 4, "en");
+    // @ts-expect-error Weekday range methods return the exact declared result family.
+    const wrongMethodWeekday${suffix}: ${wrong} = translator.formatWeekday${suffix}(0, 4);
+    ${["temporal", "translator"]
+      .map(receiver => {
+        const language = receiver === "temporal" ? ', "en"' : "";
+        return `
+    // @ts-expect-error Start endpoints do not coerce strings.
+    ${receiver}.formatWeekday${suffix}("0", 4${language});
+    // @ts-expect-error End endpoints do not coerce strings.
+    ${receiver}.formatWeekday${suffix}(0, "4"${language});
+    // @ts-expect-error Start endpoints do not accept Date objects.
+    ${receiver}.formatWeekday${suffix}(new Date(), 4${language});
+    // @ts-expect-error End endpoints do not accept bigint.
+    ${receiver}.formatWeekday${suffix}(0, 4n${language});
+    // @ts-expect-error Both weekday endpoints are required.
+    ${receiver}.formatWeekday${suffix}(0${language});
+    // @ts-expect-error Weekday width is a closed union.
+    ${receiver}.formatWeekday${suffix}(0, 4${language}, { width: "wide" });
+    // @ts-expect-error Weekday options do not expose native calendar fields.
+    ${receiver}.formatWeekday${suffix}(0, 4${language}, { year: "numeric" });
+    // @ts-expect-error Weekday options do not expose clock styles.
+    ${receiver}.formatWeekday${suffix}(0, 4${language}, { timeStyle: "short" });`;
+      })
+      .join("\n")}
+    ${
+      suffix.endsWith("ToParts")
+        ? `
+    weekday${suffix}.push({ type: "literal", value: "consumer-owned", source: "shared" });
+    weekday${suffix}[0]!.value = "consumer-owned";
+    weekday${suffix}[0]!.source = "endRange";
+    const weekdaySource: "startRange" | "endRange" | "shared" = methodWeekday${suffix}[0]!.source;
+    // @ts-expect-error Native range source metadata is a closed union.
+    methodWeekday${suffix}[0]!.source = "start";`
+        : ""
+    }
+    `;
+      })
+      .join("\n")}
+    ${["", "ToParts", "Range", "RangeToParts"]
       .map(suffix =>
         ["timeZone", "timeZoneName"]
           .map(
             key => `
     // @ts-expect-error Weekdays forbid zones.
-    temporal.formatWeekday${suffix}(0, "en", { ${key}: "UTC" });
+    temporal.formatWeekday${suffix}(${suffix.startsWith("Range") ? "0, 4" : "0"}, "en", { ${key}: "UTC" });
     // @ts-expect-error Weekday methods forbid zones.
-    translator.formatWeekday${suffix}(0, { ${key}: "UTC" });`,
+    translator.formatWeekday${suffix}(${suffix.startsWith("Range") ? "0, 4" : "0"}, { ${key}: "UTC" });`,
           )
           .join("\n"),
       )
@@ -619,8 +875,9 @@ try {
       assert.equal(translator.selectPlural(1), "one");
        (${assertParts.toString()})(core, translator);
         (${assertNumberRanges.toString()})(core, translator);
-         (${assertDateTimeRanges.toString()})(core, translator);
-         (${assertDateTimeContract.toString()})(core, translator);
+          (${assertDateTimeRanges.toString()})(core, translator);
+          (${assertDateTimeContract.toString()})(core, translator);
+          (${assertWeekdayRanges.toString()})(core, translator);
       const catalogEvents = [];
       const unsubscribeCatalog = translator.subscribeCatalog(event => catalogEvents.push(event));
       translator.setTranslation("smoke", { en: "Installed package" });
@@ -751,6 +1008,22 @@ try {
       { cwd: consumer, stdio: "inherit" },
     );
   }
+
+  for (const entry of [new URL("../dist/index.js", import.meta.url).href, "@unilarva/translator"])
+    for (const missing of ["formatRange", "formatRangeToParts"])
+      for (const warm of [false, true])
+        execFileSync(
+          process.execPath,
+          [
+            "--input-type=module",
+            "--eval",
+            `
+          import assert from "node:assert/strict";
+          await (${assertWeekdayCapabilities.toString()})(${JSON.stringify(entry)}, ${JSON.stringify(missing)}, ${JSON.stringify(warm)});
+        `,
+          ],
+          { cwd: consumer, stdio: "inherit" },
+        );
 
   // Probe fresh processes before import and after warming every datetime operation/cache.
   for (const entry of [new URL("../dist/index.js", import.meta.url).href, "@unilarva/translator"])

@@ -38,6 +38,8 @@ export {
   formatTimeRangeToParts,
   formatTimeToParts,
   formatWeekday,
+  formatWeekdayRange,
+  formatWeekdayRangeToParts,
   formatWeekdayToParts,
   selectPlural,
 } from "./intl.js";

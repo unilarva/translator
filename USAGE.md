@@ -26,6 +26,7 @@ updates. Package internals and contributor workflows are documented in
   - [Structured Formatting Parts](#structured-formatting-parts)
   - [Number And Currency Ranges](#number-and-currency-ranges)
   - [Date And Clock Ranges](#date-and-clock-ranges)
+  - [Weekday Ranges](#weekday-ranges)
   - [Relative Time And Plural Selection](#relative-time-and-plural-selection)
 - [Logging](#logging)
 - [DOM Binding](#dom-binding)
@@ -1120,7 +1121,7 @@ string helper byte-for-byte; use the native parts as returned rather than normal
 
 Parts are structured text, not HTML or a safe-HTML representation. Consumers own rendering and
 context-appropriate escaping. These APIs add no DOM markers or automatic UI updates. All seven
-single-value parts APIs and number/currency/calendar/datetime/clock ranges are available. Existing string return
+single-value parts APIs and number/currency/calendar/datetime/clock/weekday ranges are available. Existing string return
 types are unchanged.
 
 Each parts call checks only its required native method at call time:
@@ -1311,7 +1312,78 @@ Standalone helpers throw without logging. Methods log original failures safely a
 `date-range-format-failed`, `date-range-format-to-parts-failed`, `time-range-format-failed`, or
 `time-range-format-to-parts-failed`, then rethrow the identical error, including option coercion,
 invalid endpoint pairs and unavailable native methods. Logger failures cannot replace that error.
-Ranges do not add relative-time, weekday, or plural-range APIs.
+Ranges do not add relative-time or plural-range APIs.
+
+### Weekday Ranges
+
+The DOM-free root exports weekday range strings and parts, reusing `WeekdayFormatOptions`:
+
+```ts
+function formatWeekdayRange(
+  start: number,
+  end: number,
+  language: string,
+  options?: WeekdayFormatOptions,
+): string;
+function formatWeekdayRangeToParts(
+  start: number,
+  end: number,
+  language: string,
+  options?: WeekdayFormatOptions,
+): Intl.DateTimeRangeFormatPart[];
+```
+
+Matching Translator methods omit the explicit language argument and retain the same optional options
+and return types. Both endpoints must be integers from Monday `0` through Sunday `6`; invalid
+endpoints throw `RangeError` without coercing strings, boxed numbers, or other values.
+
+These ranges describe an **inclusive, recurring, contiguous forward weekly span**, not real calendar
+dates, elapsed duration, or arbitrary weekday sets. Descending indices wrap through Sunday: Friday
+`4` to Monday `0` includes Friday, Saturday, Sunday, and Monday. Equal endpoints mean one weekday,
+not a full week. Applications own selecting/grouping noncontiguous days and assigning schedule rules.
+
+```ts
+import { formatWeekdayRange, formatWeekdayRangeToParts } from "@unilarva/translator";
+
+formatWeekdayRange(0, 4, "en-GB"); // Monday through Friday.
+formatWeekdayRange(4, 0, "fi-FI", { width: "short" }); // Friday through Monday, wrapping.
+formatWeekdayRangeToParts(2, 2, "en-US"); // Wednesday only, using the native range operation.
+translator.formatWeekdayRange(0, 4);
+translator.formatWeekdayRangeToParts(4, 0, { width: "narrow", language: "ja-JP" });
+```
+
+Width defaults to `"long"`; `"short"` and `"narrow"` are also supported. Narrow weekday labels can
+be ambiguous and are preserved as supplied by Intl, not expanded or disambiguated. Standalone helpers
+use the explicit language and methods use the active language unless `options.language` overrides
+it. Catalog availability and translation fallbacks do not select the formatting locale. As with
+single weekdays, `timeZone` and `timeZoneName` are forbidden by property presence, including
+inherited, non-enumerable, or explicitly `undefined` fields. No zone conversion is performed.
+
+For native formatting, Monday is anchored privately to `1970-01-05` UTC, with the end in that same
+synthetic week plus seven days when `end < start`. Only weekday output is requested; these anchors
+are not schedule dates. Each helper delegates to its corresponding native date-time range operation,
+including equal endpoints. Strings are byte-for-byte native output for the prepared inputs/options,
+not concatenated endpoint names. Intl owns punctuation, spacing, shared fields, and equality patterns;
+there is no guarantee of a separator, a particular dash, or compact output.
+
+Parts are direct, fresh, mutable, caller-owned native arrays and records, retaining order, literals,
+and `source` (`startRange`, `endRange`, `shared`). Mutations cannot affect later results. The shared
+bounded date-time cache stores formatters only, never endpoints or results; observable object-valued
+option coercions bypass reuse. Joined parts need not reproduce the string operation byte-for-byte
+because native whitespace can differ. Do not filter or normalize literals. Parts are structured text,
+not HTML; consumers own rendering and escaping.
+
+String calls check only `Intl.DateTimeFormat.prototype.formatRange`; parts calls check only
+`Intl.DateTimeFormat.prototype.formatRangeToParts`, at call time even with a cached formatter, never
+at import. Missing support throws an actionable `TypeError` naming the precise method and requiring
+a supporting runtime or consumer-provided polyfill. Missing one method does not disable the other,
+ordinary formatting, or single-value parts. The package supplies no fallback, polyfill, or runtime
+dependency.
+
+Standalone helpers throw without logging. Methods safely log original failures as
+`weekday-range-format-failed` or `weekday-range-format-to-parts-failed`, then rethrow the identical
+error even if logging fails. Calls do not change translator settings or emit language, catalog, or
+registry events. These core APIs add no DOM markers or automatic UI refreshes.
 
 ### Relative Time And Plural Selection
 
@@ -1781,7 +1853,7 @@ whitespace, signs, exponents, and hexadecimal notation are invalid. This conserv
 is narrower than options supported by some newer host `Intl` implementations.
 
 There are no built-in range, datetime-instant, relative-time, or plural-selection markers. The
-calendar/instant API split does not add markers or change existing single-value DOM behavior.
+calendar/instant API split and weekday core ranges do not add markers or change existing single-value DOM behavior.
 Call the core helpers from
 application code; application-owned rendering and update scheduling remain explicit.
 
@@ -1990,6 +2062,9 @@ The root entry exports:
 - `formatDateRange()`, `formatDateRangeToParts()`, `formatTimeRange()`, and
   `formatTimeRangeToParts()`, also available as Translator methods, returning native range strings
   or mutable `Intl.DateTimeRangeFormatPart[]` with source metadata;
+- `formatWeekdayRange()` and `formatWeekdayRangeToParts()`, also available as Translator methods,
+  for recurring contiguous forward weekday spans, returning native strings or mutable
+  `Intl.DateTimeRangeFormatPart[]` with source metadata;
 - `formatDateTime()`, `formatDateTimeToParts()`, `formatDateTimeRange()`, and
   `formatDateTimeRangeToParts()`, also available as Translator methods, for Date instants with
   required `DateTimeFormatOptions` containing an explicit `timeZone`;

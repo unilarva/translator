@@ -38,10 +38,14 @@ import { emitTranslatorLog, observeCallbackResult } from "./logging.js";
 import { interpolate } from "./interpolation.js";
 import {
   formatCurrency as formatCurrencyValue,
+  formatCurrencyRange as formatCurrencyRangeValue,
+  formatCurrencyRangeToParts as formatCurrencyRangeParts,
   formatCurrencyToParts as formatCurrencyParts,
   formatDate as formatDateValue,
   formatDateToParts as formatDateParts,
   formatNumber as formatNumberValue,
+  formatNumberRange as formatNumberRangeValue,
+  formatNumberRangeToParts as formatNumberRangeParts,
   formatNumberToParts as formatNumberParts,
   formatRelativeTime as formatRelativeTimeValue,
   formatRelativeTimeToParts as formatRelativeTimeParts,
@@ -1121,6 +1125,43 @@ export class Translator {
   }
 
   /**
+   * Formats a native number range using the active language unless `options.language` overrides it.
+   * @param start - Finite starting number; numeric strings and bigint are not accepted.
+   * @param end - Finite ending number; descending ranges, signed zero, and rounding retain native semantics.
+   * @param options - Native number options and locale override; defaults to Intl defaults.
+   * @returns Native range text with shared affixes and equal/rounded-endpoint approximation.
+   * @throws RangeError for invalid endpoints/locale/options; TypeError for native option errors or
+   * missing Intl.NumberFormat formatRange support (requires a supporting runtime or polyfill).
+   * Failures are logged and the original error is rethrown.
+   */
+  public formatNumberRange(start: number, end: number, options: NumberFormatOptions = {}): string {
+    return this.#format("number-range-format-failed", () =>
+      formatNumberRangeValue(start, end, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats native number range parts using the active language unless `options.language` overrides it.
+   * @param start - Finite starting number; numeric strings and bigint are not accepted.
+   * @param end - Finite ending number; descending ranges, signed zero, and rounding retain native semantics.
+   * @param options - Native number options and locale override; defaults to Intl defaults.
+   * @returns Fresh, caller-owned mutable native parts and records with original order, literals,
+   * approximation signs, and startRange/endRange/shared source metadata; not HTML.
+   * @throws RangeError for invalid endpoints/locale/options; TypeError for native option errors or
+   * missing Intl.NumberFormat formatRangeToParts support (requires a supporting runtime or polyfill).
+   * Failures are logged and the original error is rethrown.
+   */
+  public formatNumberRangeToParts(
+    start: number,
+    end: number,
+    options: NumberFormatOptions = {},
+  ): Intl.NumberRangeFormatPart[] {
+    return this.#format("number-range-format-to-parts-failed", () =>
+      formatNumberRangeParts(start, end, this.#language, options),
+    );
+  }
+
+  /**
    * Formats a signed relative amount in an explicit unit using the active language unless overridden.
    * @param value - Finite amount; negative means past and positive means future.
    * @param unit - Native singular or plural relative-time unit; no automatic unit selection occurs.
@@ -1200,6 +1241,45 @@ export class Translator {
   ): Intl.NumberFormatPart[] {
     return this.#format("currency-format-to-parts-failed", () =>
       formatCurrencyParts(value, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats a native currency range using the active language unless `options.language` overrides it.
+   * @param start - Finite starting amount; numeric strings and bigint are not accepted.
+   * @param end - Finite ending amount; descending ranges, signed zero, and rounding retain native semantics.
+   * @param options - Required three-letter ASCII currency code, native options, and locale override.
+   * Forces currency style, uppercases the code, and uses native currency defaults; registry membership is not checked.
+   * @returns Native currency range text with shared affixes and equal/rounded-endpoint approximation.
+   * @throws RangeError for invalid endpoints/code/locale/options; TypeError for native option errors or
+   * missing Intl.NumberFormat formatRange support (requires a supporting runtime or polyfill).
+   * Failures are logged and the original error is rethrown.
+   */
+  public formatCurrencyRange(start: number, end: number, options: CurrencyFormatOptions): string {
+    return this.#format("currency-range-format-failed", () =>
+      formatCurrencyRangeValue(start, end, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats native currency range parts using the active language unless `options.language` overrides it.
+   * @param start - Finite starting amount; numeric strings and bigint are not accepted.
+   * @param end - Finite ending amount; descending ranges, signed zero, and rounding retain native semantics.
+   * @param options - Required three-letter ASCII currency code, native options, and locale override.
+   * Forces currency style, uppercases the code, and uses native currency defaults; registry membership is not checked.
+   * @returns Fresh, caller-owned mutable native parts and records with original order, literals,
+   * approximation signs, and startRange/endRange/shared source metadata; not HTML.
+   * @throws RangeError for invalid endpoints/code/locale/options; TypeError for native option errors or
+   * missing Intl.NumberFormat formatRangeToParts support (requires a supporting runtime or polyfill).
+   * Failures are logged and the original error is rethrown.
+   */
+  public formatCurrencyRangeToParts(
+    start: number,
+    end: number,
+    options: CurrencyFormatOptions,
+  ): Intl.NumberRangeFormatPart[] {
+    return this.#format("currency-range-format-to-parts-failed", () =>
+      formatCurrencyRangeParts(start, end, this.#language, options),
     );
   }
 

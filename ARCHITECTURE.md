@@ -38,7 +38,7 @@ This document is for package maintainers. Consumer setup and behavior belong in
 - [Development](#development)
 - [Adding Or Changing Features](#adding-or-changing-features)
 - [Future Enhancements](#future-enhancements)
-  - [Intl Formatting Ranges](#intl-formatting-ranges)
+  - [Date And Clock Formatting Ranges](#date-and-clock-formatting-ranges)
   - [Inserted Markup Observation](#inserted-markup-observation)
   - [JSON-To-Key Declaration Generation](#json-to-key-declaration-generation)
   - [Stable Reactive Snapshots](#stable-reactive-snapshots)
@@ -179,10 +179,27 @@ Clock parts must never expose synthetic date fields or a zone label. Compare res
 native parts operation, not joined string output: DateTimeFormat string and parts literals can
 differ in whitespace.
 
-Check the requested native `formatToParts` method only at call time, never during module import.
+`formatNumberRange()`, `formatNumberRangeToParts()`, `formatCurrencyRange()`, and
+`formatCurrencyRangeToParts()` share existing number/currency option preparation and bounded
+NumberFormat caches with single-value strings and parts. Require two finite `number` endpoints,
+without coercion, numeric strings, bigint, or boxed numbers; invalid endpoints throw `RangeError`.
+Reuse family option types, currency validation/uppercase normalization, and forced currency style.
+Delegate descending ranges, equal/equal-after-rounding approximation, signed zero, rounding, and
+shared affixes to native range operations. Do not sort, reject descending numeric ranges, collapse
+equal endpoints, or concatenate formatted values. Range-parts calls return direct fresh mutable
+`Intl.NumberRangeFormatPart[]` and records, preserving native order, literals, `approximatelySign`,
+and `source` (`startRange`, `endRange`, `shared`). Cache formatters, never endpoints or results.
+Date and clock ranges remain unimplemented.
+
+Check the requested native `formatToParts`, `formatRange`, or `formatRangeToParts` method only at
+call time, never during module import.
 A missing method throws an actionable `TypeError` naming the method and requiring a supporting host
 or consumer-provided polyfill. Date, clock-time, and weekday parts require
-`Intl.DateTimeFormat.prototype.formatToParts`. Do not install polyfills or add string fallbacks;
+`Intl.DateTimeFormat.prototype.formatToParts`. Numeric range strings require only
+`Intl.NumberFormat.prototype.formatRange`; numeric range parts require only
+`Intl.NumberFormat.prototype.formatRangeToParts`. Name the exact missing method in the error;
+absence of one range method must not disable the other or ordinary string/single-value parts calls.
+Do not install polyfills or add string fallbacks;
 unsupported methods must not break imports or unrelated operations. Formatting uses active/explicit locales, never catalog
 fallback, and does not change translator settings or emit language, catalog, or registry events.
 
@@ -486,7 +503,11 @@ Parts methods use `number-format-to-parts-failed`, `currency-format-to-parts-fai
 `relative-time-format-to-parts-failed`, `date-format-to-parts-failed`, `time-format-to-parts-failed`, and
 `weekday-format-to-parts-failed`. Standalone helpers throw without logging; methods use the
 safe adapter and rethrow the identical error, including option-coercion and missing-native-method
-failures. Preserve existing diagnostic events and detail shapes for string methods.
+failures. Numeric range methods use `number-range-format-failed`,
+`number-range-format-to-parts-failed`, `currency-range-format-failed`, and
+`currency-range-format-to-parts-failed` through the same safe adapter, preserving original error
+identity even when logging fails. Range calls emit no language, catalog, or registry events.
+Preserve existing diagnostic events and detail shapes for existing string methods.
 
 Subscriber and logger callbacks run synchronously and are never awaited. Observe accidental returned
 promises/thenables through native promise assimilation: subscriber rejections emit ordinary failure
@@ -515,6 +536,13 @@ Tests use Node's test runner through `tsx` and Happy DOM for browser-shaped beha
   the narrower `ES2022` plus `ES2023.Intl` consumer configuration. Compare parts to their native
   operation, and cover fresh mutable ownership, defaults, strict inputs, locale overrides, shared
   cache/coercion behavior, error identity, and call-time missing-method diagnostics.
+
+Numeric range coverage must compare each operation to its native counterpart, including descending,
+equal and equal-after-rounding endpoints, signed zero, shared affixes, `approximatelySign`, and source
+metadata. Test both endpoint validations, normalized currencies, supported rounding options, cache
+reuse, mutable ownership, no state events, and missing-method isolation across imports, ordinary
+formatting, single-value parts, and the other range operation. Verify all four helpers and matching
+methods in source and clean installed-consumer runtime/type fixtures.
 
 Tests that deliberately model hostile or malformed input are contract tests, not incidental edge
 cases. Preserve them when refactoring parsing or rendering.
@@ -596,7 +624,7 @@ points rather than changing current return types, event semantics, grammar, or c
 
 | Order | Candidate                           | Importance / implementation gate                  | Complexity  | Public contract addition                  |
 | ----- | ----------------------------------- | ------------------------------------------------- | ----------- | ----------------------------------------- |
-| 1     | Intl formatting ranges              | Natural follow-up; can ship separately            | Medium      | Range inputs, results, runtime support    |
+| 1     | Date and clock formatting ranges    | Natural follow-up; can ship separately            | Medium      | Range inputs, results, runtime support    |
 | 2     | Inserted markup observation         | High for dynamic imperative DOM when needed       | Medium-high | Opt-in scheduling and binding lifecycle   |
 | 3     | JSON-to-key declaration generation  | When external JSON makes typed keys inconvenient  | Medium      | Separate tooling inputs and output        |
 | 4     | Stable reactive snapshots           | Design from a concrete framework/SSR integration  | Medium-high | Stable identity and comprehensive events  |
@@ -606,16 +634,17 @@ points rather than changing current return types, event semantics, grammar, or c
 | 8     | Broader rich-text grammar           | Only with a concrete grammar requirement          | High        | Opt-in grammar and node/renderer types    |
 | 9     | Asynchronous rendering              | Only when synchronous rendering is insufficient   | High        | Separate async lifecycle and completion   |
 
-### Intl Formatting Ranges
+### Date And Clock Formatting Ranges
 
-Implement separately from single-value parts, with named string and parts helpers and matching
-Translator methods for the native formatter families that support ranges. Define endpoint validation,
-calendar-versus-instant compatibility, clock ordering, range-part source metadata, and native
-range/runtime availability. Preserve existing single-value defaults, finite-number constraints,
-calendar/clock/instant distinctions, and cache/coercion behavior. Do not manufacture localized ranges
-by joining two formatted strings. All range APIs remain unimplemented. Use native range types under
-the documented ES2023 Intl declaration baseline and verify isolated consumer declarations.
-Unsupported hosts need a clear call-time error, not an import-time failure or an implicit polyfill.
+Number and currency range strings and parts are implemented. The remaining candidate is date and
+clock-time range strings and parts, with matching Translator methods. Define endpoint validation,
+calendar-versus-instant pair compatibility, clock ordering and seconds defaults, range-part source
+metadata, and native range/runtime availability. Preserve single-value calendar/clock/instant
+distinctions and cache/coercion behavior, and verify clock ranges never expose synthetic calendar or
+zone fields. Do not manufacture localized ranges by joining formatted strings. Date and clock range
+APIs remain unimplemented. Use native range types under the documented ES2023 Intl declaration
+baseline and verify isolated consumer declarations. Unsupported hosts need a method-specific
+call-time error, not an import-time failure or an implicit polyfill.
 
 ### Inserted Markup Observation
 

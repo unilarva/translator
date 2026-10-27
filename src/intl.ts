@@ -310,6 +310,75 @@ export function formatNumberToParts(
 }
 
 /**
+ * Formats two finite numbers as a native localized range, without sorting or collapsing endpoints.
+ * @param start - Finite starting number; numeric strings and bigint are not accepted.
+ * @param end - Finite ending number; descending ranges, signed zero, and rounding retain native semantics.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Native number options and locale override; defaults to Intl defaults.
+ * @returns Native range text, including shared affixes and approximation for equal/rounded endpoints.
+ * @throws {RangeError} If either endpoint is nonfinite or the effective locale/options are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.NumberFormat.prototype.formatRange`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatNumberRange(
+  start: number,
+  end: number,
+  language: string,
+  options: NumberFormatOptions = {},
+): string {
+  return numberRange(numberFormatter(language, options), start, end);
+}
+
+/** Validates numeric endpoints and checks only the requested native string-range capability. */
+function numberRange(formatter: Intl.NumberFormat, start: number, end: number): string {
+  finiteNumber(start, "Range start");
+  finiteNumber(end, "Range end");
+  if (typeof formatter.formatRange !== "function") {
+    throw new TypeError(
+      "Intl.NumberFormat.prototype.formatRange is unavailable; use a supporting runtime or consumer-provided polyfill",
+    );
+  }
+  return formatter.formatRange(start, end);
+}
+
+/**
+ * Formats two finite numbers as native structured range parts, without sorting or collapsing endpoints.
+ * @param start - Finite starting number; numeric strings and bigint are not accepted.
+ * @param end - Finite ending number; descending ranges, signed zero, and rounding retain native semantics.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Native number options and locale override; defaults to Intl defaults.
+ * @returns Fresh, caller-owned mutable parts and records, preserving native order, literals,
+ * approximation signs, and `startRange`/`endRange`/`shared` sources; no HTML is produced.
+ * @throws {RangeError} If either endpoint is nonfinite or the effective locale/options are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.NumberFormat.prototype.formatRangeToParts`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatNumberRangeToParts(
+  start: number,
+  end: number,
+  language: string,
+  options: NumberFormatOptions = {},
+): Intl.NumberRangeFormatPart[] {
+  return numberRangeParts(numberFormatter(language, options), start, end);
+}
+
+/** Validates numeric endpoints and returns fresh native parts after a call-time capability check. */
+function numberRangeParts(
+  formatter: Intl.NumberFormat,
+  start: number,
+  end: number,
+): Intl.NumberRangeFormatPart[] {
+  finiteNumber(start, "Range start");
+  finiteNumber(end, "Range end");
+  if (typeof formatter.formatRangeToParts !== "function") {
+    throw new TypeError(
+      "Intl.NumberFormat.prototype.formatRangeToParts is unavailable; use a supporting runtime or consumer-provided polyfill",
+    );
+  }
+  return formatter.formatRangeToParts(start, end);
+}
+
+/**
  * Formats a signed relative amount in an explicit unit; does not calculate date differences.
  * Negative values describe the past and positive values the future, using native Intl defaults.
  *
@@ -460,6 +529,49 @@ export function formatCurrencyToParts(
     );
   }
   return formatter.formatToParts(number);
+}
+
+/**
+ * Formats two finite amounts as a native currency range, forcing currency style and uppercasing the code.
+ * @param start - Finite starting amount; numeric strings and bigint are not accepted.
+ * @param end - Finite ending amount; descending ranges, signed zero, and rounding retain native semantics.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Required three-letter ASCII currency code, native number options, and locale override.
+ * Code syntax is validated, not registry membership; native currency defaults apply.
+ * @returns Native currency range text with shared affixes and equal/rounded-endpoint approximation.
+ * @throws {RangeError} If the code is malformed, either amount is nonfinite, or locale/options are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.NumberFormat.prototype.formatRange`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatCurrencyRange(
+  start: number,
+  end: number,
+  language: string,
+  options: CurrencyFormatOptions,
+): string {
+  return numberRange(currencyFormatter(language, options), start, end);
+}
+
+/**
+ * Formats two finite amounts as native currency range parts, forcing currency style and uppercasing the code.
+ * @param start - Finite starting amount; numeric strings and bigint are not accepted.
+ * @param end - Finite ending amount; descending ranges, signed zero, and rounding retain native semantics.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Required three-letter ASCII currency code, native number options, and locale override.
+ * Code syntax is validated, not registry membership; native currency defaults apply.
+ * @returns Fresh, caller-owned mutable parts and records, preserving native order, literals,
+ * approximation signs, and `startRange`/`endRange`/`shared` sources; no HTML is produced.
+ * @throws {RangeError} If the code is malformed, either amount is nonfinite, or locale/options are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.NumberFormat.prototype.formatRangeToParts`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatCurrencyRangeToParts(
+  start: number,
+  end: number,
+  language: string,
+  options: CurrencyFormatOptions,
+): Intl.NumberRangeFormatPart[] {
+  return numberRangeParts(currencyFormatter(language, options), start, end);
 }
 
 /**

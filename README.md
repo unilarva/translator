@@ -41,7 +41,7 @@ servers, workers, and command-line tools; browser integration is isolated in
   configurable missing-value behavior, and strict `Intl` helpers for formatting, relative time,
   and plural-category selection keep lookup and formatting rules explicit. Number, currency, date,
   clock-time, weekday, and relative-time parts support consumer-controlled rendering without parsing
-  formatted strings.
+  formatted strings. Native number and currency ranges include strings and source-tagged parts.
 - **Scoped UIs and synchronized language controls.** Bind a document or subtree, use independent
   translators for previews, and connect existing native selects or details dropdowns to an observable
   language registry. Direction synchronization is opt-in; styling and persistence stay application-owned.
@@ -72,8 +72,12 @@ servers, workers, and command-line tools; browser integration is isolated in
 - An ES2022-capable runtime with the required `Intl` locale data.
 - TypeScript consumers require `ES2023` libraries, or `ES2022` plus `ES2023.Intl`. The root
   declarations need neither DOM nor Node ambient types. The emitted JavaScript target remains ES2022.
-- Parts calls require the corresponding native `Intl` `formatToParts` method. Missing methods produce
-  actionable call-time errors; the package does not install polyfills.
+- Single-value parts calls require the corresponding native `Intl` `formatToParts` method. Missing
+  methods produce actionable call-time errors; the package does not install polyfills.
+- Number and currency ranges require `Intl.NumberFormat.prototype.formatRange` or
+  `formatRangeToParts`, according to the operation called. Missing methods produce actionable
+  call-time errors; imports and unrelated formatting remain available. Date and clock ranges are
+  not yet implemented. See [numeric ranges](./USAGE.md#number-and-currency-ranges).
 - A browser DOM only when using `@unilarva/translator/dom`; the root entry has no DOM requirement.
 
 | Import                              | Purpose                                                            |

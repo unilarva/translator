@@ -22,6 +22,7 @@ updates. Package internals and contributor workflows are documented in
 - [Loading Files](#loading-files)
 - [Locale Formatting](#locale-formatting)
   - [Structured Formatting Parts](#structured-formatting-parts)
+  - [Number And Currency Ranges](#number-and-currency-ranges)
   - [Relative Time And Plural Selection](#relative-time-and-plural-selection)
 - [Logging](#logging)
 - [DOM Binding](#dom-binding)
@@ -990,8 +991,8 @@ string helper byte-for-byte; use the native parts as returned rather than normal
 
 Parts are structured text, not HTML or a safe-HTML representation. Consumers own rendering and
 context-appropriate escaping. These APIs add no DOM markers or automatic UI updates. All six
-single-value parts APIs are available; all range APIs remain future work. Existing string return
-types are unchanged.
+single-value parts APIs and number/currency ranges are available; date and clock ranges remain
+future work. Existing string return types are unchanged.
 
 Each parts call checks only its required native method at call time:
 `Intl.NumberFormat.prototype.formatToParts` for number/currency,
@@ -1007,6 +1008,90 @@ safe logger adapter as `number-format-to-parts-failed`, `currency-format-to-part
 `weekday-format-to-parts-failed`, then rethrow the identical error, including option-coercion
 and missing-method failures. Logger failures do not replace that error. Parts calls do not mutate
 translator settings or emit language, catalog, or registry events.
+
+### Number And Currency Ranges
+
+The DOM-free root exports native numeric range strings and structured range parts:
+
+```ts
+function formatNumberRange(
+  start: number,
+  end: number,
+  language: string,
+  options?: NumberFormatOptions,
+): string;
+function formatNumberRangeToParts(
+  start: number,
+  end: number,
+  language: string,
+  options?: NumberFormatOptions,
+): Intl.NumberRangeFormatPart[];
+function formatCurrencyRange(
+  start: number,
+  end: number,
+  language: string,
+  options: CurrencyFormatOptions,
+): string;
+function formatCurrencyRangeToParts(
+  start: number,
+  end: number,
+  language: string,
+  options: CurrencyFormatOptions,
+): Intl.NumberRangeFormatPart[];
+```
+
+Matching Translator methods omit the language argument and retain the same endpoint, option, and
+return types. Number options default to `{}`; currency options are required. Both families reuse
+their single-value option types, defaults, preparation, and bounded formatter caches. Currency codes
+must contain three ASCII letters and are normalized to uppercase; currency style is forced.
+
+```ts
+import { formatNumberRange, formatCurrencyRangeToParts } from "@unilarva/translator";
+
+const range = formatNumberRange(10, 20, "en-US", { maximumFractionDigits: 0 });
+const parts = formatCurrencyRangeToParts(12, 18, "fi-FI", { currency: "eur" });
+translator.formatNumberRange(10, 20);
+translator.formatNumberRangeToParts(1.01, 1.02, { maximumFractionDigits: 0 });
+translator.formatCurrencyRange(12, 18, { currency: "EUR", language: "fi-FI" });
+translator.formatCurrencyRangeToParts(12, 18, { currency: "EUR" });
+```
+
+Both endpoints must be finite JavaScript numbers. `NaN`, infinities, numeric strings, bigint, boxed
+numbers, and other non-number inputs throw `RangeError` without numeric coercion. Native option and
+coercion errors propagate unchanged. Standalone helpers use the explicit language and methods use
+the active language, unless `options.language` overrides it; normal tag normalization applies.
+Neither catalog availability nor primary/additional translation fallbacks choose the formatter locale.
+
+The host's native range operation owns descending ranges, signed zero, rounding, equal or
+equal-after-rounding endpoint approximation, and shared affixes such as a currency symbol. Endpoints
+are not sorted, descending numeric ranges are not rejected by the package, and equal endpoints are
+not collapsed into a single-value call. No package-selected separator joins two formatted strings.
+Newer rounding options are passed through, but typed options still require host support.
+
+Range parts are direct, fresh, mutable, caller-owned native arrays with fresh records. They preserve
+native order, literals, part types (including `approximatelySign`), and each part's `source`:
+`"startRange"`, `"endRange"`, or `"shared"`. Shared parts and approximation signs need not belong to
+one endpoint. Only formatters are cached, never endpoints or results; mutating a result cannot affect
+later calls. Parts are structured text, not HTML or a safe-HTML representation. Rendering and escaping
+remain application-owned, with no new DOM markers or automatic updates.
+
+Each string range call checks only `Intl.NumberFormat.prototype.formatRange`; each range-parts call
+checks only `Intl.NumberFormat.prototype.formatRangeToParts`. Checks occur at call time, never at
+import. A missing method throws an actionable `TypeError` naming that exact method and directing the
+consumer to a supporting runtime or consumer-provided polyfill. A missing string method does not
+disable supported range-parts calls, or vice versa; imports, ordinary strings, and single-value parts
+remain independent. There is no fallback implementation, package-installed polyfill, or runtime
+dependency.
+
+Standalone helpers throw without logging. Translator methods report the original failure through the
+safe logger adapter with the operation-specific event `number-range-format-failed`,
+`number-range-format-to-parts-failed`, `currency-range-format-failed`, or
+`currency-range-format-to-parts-failed`, then rethrow the identical error. This includes option-coercion
+and missing-method errors; logger failures cannot replace them. Calls do not mutate translator
+settings or emit language, catalog, or registry events.
+
+Date and clock-time range APIs remain unimplemented; numeric ranges do not add relative-time,
+weekday, or plural-range APIs.
 
 ### Relative Time And Plural Selection
 
@@ -1677,6 +1762,9 @@ The root entry exports:
 - `formatNumberToParts()`, `formatCurrencyToParts()`, `formatRelativeTimeToParts()`,
   `formatDateToParts()`, `formatTimeToParts()`, and `formatWeekdayToParts()`, also available as
   Translator methods, returning native mutable parts arrays;
+- `formatNumberRange()`, `formatNumberRangeToParts()`, `formatCurrencyRange()`, and
+  `formatCurrencyRangeToParts()`, also available as Translator methods, returning native range
+  strings or mutable `Intl.NumberRangeFormatPart[]` with source metadata;
 - `RelativeTimeFormatOptions` and `PluralSelectOptions`, combining their native `Intl` options
   with `LocaleFormatOptions`;
 - `parseRichText()` and `translateRichText()`;

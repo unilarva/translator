@@ -16,10 +16,14 @@
 export { createTypedTranslate, normalizeLanguageTag, Translator } from "./translator.js";
 export {
   formatCurrency,
+  formatCurrencyRange,
+  formatCurrencyRangeToParts,
   formatCurrencyToParts,
   formatDate,
   formatDateToParts,
   formatNumber,
+  formatNumberRange,
+  formatNumberRangeToParts,
   formatNumberToParts,
   formatRelativeTime,
   formatRelativeTimeToParts,

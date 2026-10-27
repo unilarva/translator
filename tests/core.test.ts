@@ -2062,7 +2062,7 @@ test("core types compile without ambient types and retain native abort/fetch com
     "bin/tsc",
   );
   try {
-    const imports = `import type { TranslationAbortSignal, TranslatorFetch, LanguageChangeEvent, LanguageRegistryChangeEvent } from ${JSON.stringify(types)};\nimport { Translator, formatNumberToParts, formatCurrencyToParts, formatRelativeTimeToParts, formatDateToParts, formatTimeToParts, formatWeekdayToParts, type CalendarDate, type ClockTime, type DateFormatOptions, type TimeFormatOptions, type WeekdayFormatOptions } from ${JSON.stringify(index)};\n`;
+    const imports = `import type { TranslationAbortSignal, TranslatorFetch, LanguageChangeEvent, LanguageRegistryChangeEvent } from ${JSON.stringify(types)};\nimport { Translator, formatNumberToParts, formatCurrencyToParts, formatRelativeTimeToParts, formatDateToParts, formatTimeToParts, formatWeekdayToParts, formatNumberRange, formatNumberRangeToParts, formatCurrencyRange, formatCurrencyRangeToParts, type CurrencyFormatOptions, type CalendarDate, type ClockTime, type DateFormatOptions, type TimeFormatOptions, type WeekdayFormatOptions } from ${JSON.stringify(index)};\n`;
     await writeFile(
       join(directory, "clean.ts"),
       `${imports}
@@ -2084,7 +2084,89 @@ test("core types compile without ambient types and retain native abort/fetch com
       const relative: Intl.RelativeTimeFormatPart[] = formatRelativeTimeToParts(-1, "day", "en", { numeric: "auto" });
       const methodNumber: Intl.NumberFormatPart[] = translator.formatNumberToParts(1.25, { ...rounding, language: "fi" });
       const methodCurrency: Intl.NumberFormatPart[] = translator.formatCurrencyToParts(1.25, { ...rounding, currency: "EUR" });
-      const methodRelative: Intl.RelativeTimeFormatPart[] = translator.formatRelativeTimeToParts(1, "weeks");
+       const methodRelative: Intl.RelativeTimeFormatPart[] = translator.formatRelativeTimeToParts(1, "weeks");
+       const currencyOptions: CurrencyFormatOptions = { ...rounding, currency: "eur", language: "fi" };
+       const numberRange: string = formatNumberRange(1, 2, "en");
+       const currencyRange: string = formatCurrencyRange(1, 2, "en", currencyOptions);
+       const numberRangeParts: Intl.NumberRangeFormatPart[] = formatNumberRangeToParts(1, 2, "en", { ...rounding, language: "fi" });
+       const currencyRangeParts: Intl.NumberRangeFormatPart[] = formatCurrencyRangeToParts(1, 2, "en", currencyOptions);
+       const methodNumberRange: string = translator.formatNumberRange(1, 2, { ...rounding, language: "fi" });
+       const methodCurrencyRange: string = translator.formatCurrencyRange(1, 2, currencyOptions);
+       const methodNumberRangeParts: Intl.NumberRangeFormatPart[] = translator.formatNumberRangeToParts(1, 2);
+       const methodCurrencyRangeParts: Intl.NumberRangeFormatPart[] = translator.formatCurrencyRangeToParts(1, 2, currencyOptions);
+       const approximation: Intl.NumberRangeFormatPart = { type: "approximatelySign", value: "~", source: "shared" };
+       numberRangeParts.push(approximation);
+       currencyRangeParts[0]!.source = "endRange";
+       for (const part of methodNumberRangeParts) {
+         const source: "startRange" | "endRange" | "shared" = part.source;
+         // @ts-expect-error Native range source metadata is a closed union.
+         part.source = "start";
+       }
+       for (const format of [formatNumberRange, formatNumberRangeToParts]) {
+         format(1, 2, "en");
+         // @ts-expect-error Start endpoints do not coerce strings.
+         format("1", 2, "en");
+         // @ts-expect-error End endpoints do not coerce strings.
+         format(1, "2", "en");
+         // @ts-expect-error Start endpoints do not accept bigint.
+         format(1n, 2, "en");
+         // @ts-expect-error End endpoints do not accept bigint.
+         format(1, 2n, "en");
+       }
+       for (const format of [translator.formatNumberRange, translator.formatNumberRangeToParts]) {
+         // @ts-expect-error Start endpoints do not coerce strings.
+         format("1", 2);
+         // @ts-expect-error End endpoints do not coerce strings.
+         format(1, "2");
+         // @ts-expect-error Start endpoints do not accept bigint.
+         format(1n, 2);
+         // @ts-expect-error End endpoints do not accept bigint.
+         format(1, 2n);
+       }
+       for (const format of [formatCurrencyRange, formatCurrencyRangeToParts]) {
+         // @ts-expect-error Currency range options are required.
+         format(1, 2, "en");
+         // @ts-expect-error Currency range codes are required.
+         format(1, 2, "en", {});
+         // @ts-expect-error Start endpoints do not coerce strings.
+         format("1", 2, "en", currencyOptions);
+         // @ts-expect-error End endpoints do not coerce strings.
+         format(1, "2", "en", currencyOptions);
+         // @ts-expect-error Start endpoints do not accept bigint.
+         format(1n, 2, "en", currencyOptions);
+         // @ts-expect-error End endpoints do not accept bigint.
+         format(1, 2n, "en", currencyOptions);
+       }
+       for (const format of [translator.formatCurrencyRange, translator.formatCurrencyRangeToParts]) {
+         // @ts-expect-error Currency range method options are required.
+         format(1, 2);
+         // @ts-expect-error Currency range method codes are required.
+         format(1, 2, {});
+         // @ts-expect-error Start endpoints do not coerce strings.
+         format("1", 2, currencyOptions);
+         // @ts-expect-error End endpoints do not coerce strings.
+         format(1, "2", currencyOptions);
+         // @ts-expect-error Start endpoints do not accept bigint.
+         format(1n, 2, currencyOptions);
+         // @ts-expect-error End endpoints do not accept bigint.
+         format(1, 2n, currencyOptions);
+       }
+       // @ts-expect-error Number range strings are not parts arrays.
+       const wrongNumberRange: Intl.NumberRangeFormatPart[] = formatNumberRange(1, 2, "en");
+       // @ts-expect-error Currency range strings are not parts arrays.
+       const wrongCurrencyRange: Intl.NumberRangeFormatPart[] = formatCurrencyRange(1, 2, "en", currencyOptions);
+       // @ts-expect-error Number range parts are not strings.
+       const wrongNumberRangeParts: string = formatNumberRangeToParts(1, 2, "en");
+       // @ts-expect-error Currency range parts are not strings.
+       const wrongCurrencyRangeParts: string = formatCurrencyRangeToParts(1, 2, "en", currencyOptions);
+       // @ts-expect-error Number range method strings are not parts arrays.
+       const wrongMethodNumberRange: Intl.NumberRangeFormatPart[] = translator.formatNumberRange(1, 2);
+       // @ts-expect-error Currency range method strings are not parts arrays.
+       const wrongMethodCurrencyRange: Intl.NumberRangeFormatPart[] = translator.formatCurrencyRange(1, 2, currencyOptions);
+       // @ts-expect-error Number range method parts are not strings.
+       const wrongMethodNumberRangeParts: string = translator.formatNumberRangeToParts(1, 2);
+       // @ts-expect-error Currency range method parts are not strings.
+       const wrongMethodCurrencyRangeParts: string = translator.formatCurrencyRangeToParts(1, 2, currencyOptions);
       const calendar: CalendarDate = { year: 2026, month: 10, day: 3 };
       const clock: ClockTime = { hour: 13, minute: 45, second: 0 };
       const dateOptions: DateFormatOptions = { language: "fi", dateStyle: "long", timeZone: "UTC" };

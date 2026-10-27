@@ -159,6 +159,106 @@ function assertParts(api, translator) {
 
 assertParts(core, translator);
 
+/** Checks numeric ranges against the host, including metadata and mutable ownership. */
+function assertNumberRanges(api, translator) {
+  const rounding = { maximumFractionDigits: 1, roundingMode: "halfEven" };
+  for (const language of ["en", "fi"]) {
+    for (const options of [{}, rounding]) {
+      const number = new Intl.NumberFormat(language, options);
+      const currency = new Intl.NumberFormat(language, {
+        ...options,
+        style: "currency",
+        currency: "EUR",
+      });
+      for (const [start, end] of [
+        [1, 9],
+        [9, 1],
+        [2, 2],
+        [-0, 0],
+        [0, -0],
+        [1.21, 1.24],
+      ]) {
+        const numberOptions = { ...options, language };
+        const currencyOptions = { ...options, language, currency: "eur", style: "decimal" };
+        for (const format of [
+          () => api.formatNumberRange(start, end, "en", numberOptions),
+          () => translator.formatNumberRange(start, end, numberOptions),
+        ])
+          assert.equal(format(), number.formatRange(start, end));
+        for (const format of [
+          () => api.formatCurrencyRange(start, end, "en", currencyOptions),
+          () => translator.formatCurrencyRange(start, end, currencyOptions),
+        ])
+          assert.equal(format(), currency.formatRange(start, end));
+        for (const [format, expected] of [
+          [
+            () => api.formatNumberRangeToParts(start, end, "en", numberOptions),
+            number.formatRangeToParts(start, end),
+          ],
+          [
+            () => translator.formatNumberRangeToParts(start, end, numberOptions),
+            number.formatRangeToParts(start, end),
+          ],
+          [
+            () => api.formatCurrencyRangeToParts(start, end, "en", currencyOptions),
+            currency.formatRangeToParts(start, end),
+          ],
+          [
+            () => translator.formatCurrencyRangeToParts(start, end, currencyOptions),
+            currency.formatRangeToParts(start, end),
+          ],
+        ]) {
+          const first = format();
+          const second = format();
+          assert.deepEqual(first, expected);
+          assert.deepEqual(second, expected);
+          assert.notStrictEqual(first, second);
+          assert.equal(Object.isFrozen(first), false);
+          for (let index = 0; index < first.length; index++) {
+            assert.ok(["startRange", "endRange", "shared"].includes(first[index].source));
+            assert.notStrictEqual(first[index], second[index]);
+            assert.equal(Object.isFrozen(first[index]), false);
+            first[index].value = "consumer mutation";
+            first[index].source = first[index].source === "shared" ? "startRange" : "shared";
+          }
+          first.push({ type: "approximatelySign", value: "~", source: "shared" });
+          first.length = 0;
+          assert.deepEqual(second, expected);
+          assert.deepEqual(format(), expected);
+        }
+      }
+    }
+  }
+  const number = new Intl.NumberFormat("en");
+  assert.equal(api.formatNumberRange(1, 9, "en"), number.formatRange(1, 9));
+  assert.equal(translator.formatNumberRange(1, 9), number.formatRange(1, 9));
+  assert.deepEqual(api.formatNumberRangeToParts(1, 9, "en"), number.formatRangeToParts(1, 9));
+  assert.deepEqual(translator.formatNumberRangeToParts(1, 9), number.formatRangeToParts(1, 9));
+  const equal = api.formatNumberRangeToParts(2, 2, "en");
+  assert.ok(equal.some(part => part.type === "approximatelySign" && part.source === "shared"));
+  const distinct = api.formatNumberRangeToParts(1, 9, "en");
+  assert.ok(distinct.some(part => part.source === "startRange"));
+  assert.ok(distinct.some(part => part.source === "endRange"));
+  assert.ok(distinct.some(part => part.source === "shared"));
+  for (const format of [
+    (start, end) => api.formatNumberRange(start, end, "en"),
+    (start, end) => api.formatNumberRangeToParts(start, end, "en"),
+    (start, end) => api.formatCurrencyRange(start, end, "en", { currency: "EUR" }),
+    (start, end) => api.formatCurrencyRangeToParts(start, end, "en", { currency: "EUR" }),
+    (start, end) => translator.formatNumberRange(start, end),
+    (start, end) => translator.formatNumberRangeToParts(start, end),
+    (start, end) => translator.formatCurrencyRange(start, end, { currency: "EUR" }),
+    (start, end) => translator.formatCurrencyRangeToParts(start, end, { currency: "EUR" }),
+  ]) {
+    for (const invalid of ["1", 1n, NaN, Infinity, -Infinity]) {
+      assert.throws(() => format(invalid, 2));
+      assert.throws(() => format(1, invalid));
+    }
+  }
+}
+
+assertNumberRanges(core, translator);
+
 const typescriptManifest = fileURLToPath(import.meta.resolve("typescript/package.json"));
 const typescript = resolve(dirname(typescriptManifest), "bin/tsc");
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
@@ -221,7 +321,8 @@ try {
       assert.equal(selectPlural(2, "en", { type: "ordinal" }), "two");
       assert.equal(translator.formatRelativeTime(0, "day", { numeric: "auto" }), "today");
       assert.equal(translator.selectPlural(1), "one");
-      (${assertParts.toString()})(core, translator);
+       (${assertParts.toString()})(core, translator);
+       (${assertNumberRanges.toString()})(core, translator);
       const catalogEvents = [];
       const unsubscribeCatalog = translator.subscribeCatalog(event => catalogEvents.push(event));
       translator.setTranslation("smoke", { en: "Installed package" });
@@ -257,6 +358,50 @@ try {
     ],
     { cwd: consumer, stdio: "inherit" },
   );
+
+  for (const missing of ["formatRange", "formatRangeToParts"]) {
+    execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+      import assert from "node:assert/strict";
+      const missing = ${JSON.stringify(missing)};
+      const prototype = Intl.NumberFormat.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, missing);
+      Object.defineProperty(prototype, missing, { configurable: true, value: undefined });
+      try {
+        const core = await import("@unilarva/translator");
+        const translator = new core.Translator({ language: "en" });
+        assert.equal(core.formatNumber(1, "en"), new Intl.NumberFormat("en").format(1));
+        assert.deepEqual(translator.formatNumberToParts(1), new Intl.NumberFormat("en").formatToParts(1));
+        assert.equal(typeof core.formatDate("2026-10-03", "en"), "string");
+        assert.ok(translator.formatTimeToParts("13:45").length > 0);
+        const suffix = missing === "formatRange" ? "Range" : "RangeToParts";
+        const supported = missing === "formatRange" ? "RangeToParts" : "Range";
+        for (const family of ["Number", "Currency"]) {
+          const options = family === "Currency" ? { currency: "EUR" } : {};
+          const helper = "format" + family + suffix;
+          for (const call of [
+            () => core[helper](1, 2, "en", options),
+            () => translator[helper](1, 2, options),
+          ]) assert.throws(call, error => error instanceof TypeError &&
+            error.message.includes("Intl.NumberFormat") && error.message.includes(missing) &&
+            /runtime|polyfill/i.test(error.message));
+          const formatter = new Intl.NumberFormat("en", family === "Currency" ? { style: "currency", currency: "EUR" } : {});
+          const native = missing === "formatRange" ? "formatRangeToParts" : "formatRange";
+          assert.deepEqual(core["format" + family + supported](1, 2, "en", options), formatter[native](1, 2));
+          assert.deepEqual(translator["format" + family + supported](1, 2, options), formatter[native](1, 2));
+        }
+      } finally {
+        Object.defineProperty(prototype, missing, descriptor);
+      }
+    `,
+      ],
+      { cwd: consumer, stdio: "inherit" },
+    );
+  }
 
   const compilerOptions = {
     strict: true,
@@ -428,6 +573,96 @@ try {
     `,
     ],
     [
+      "numeric-ranges",
+      ["ES2023"],
+      `
+      import { Translator, formatNumberRange, formatNumberRangeToParts, formatCurrencyRange, formatCurrencyRangeToParts, type CurrencyFormatOptions } from "@unilarva/translator";
+      const translator = new Translator({ language: "en" });
+      const options: CurrencyFormatOptions = { currency: "eur", language: "fi", roundingMode: "halfEven", maximumFractionDigits: 1 };
+      const number: string = formatNumberRange(1, 2, "en");
+      const currency: string = formatCurrencyRange(1, 2, "en", options);
+      const numberParts: Intl.NumberRangeFormatPart[] = formatNumberRangeToParts(1, 2, "en", options);
+      const currencyParts: Intl.NumberRangeFormatPart[] = formatCurrencyRangeToParts(1, 2, "en", options);
+      const methodNumber: string = translator.formatNumberRange(1, 2, options);
+      const methodCurrency: string = translator.formatCurrencyRange(1, 2, options);
+      const methodNumberParts: Intl.NumberRangeFormatPart[] = translator.formatNumberRangeToParts(1, 2);
+      const methodCurrencyParts: Intl.NumberRangeFormatPart[] = translator.formatCurrencyRangeToParts(1, 2, options);
+      numberParts.push({ type: "approximatelySign", value: "~", source: "shared" });
+      currencyParts[0]!.value = "consumer-owned";
+      currencyParts[0]!.source = "endRange";
+      for (const part of methodNumberParts) {
+        const source: "startRange" | "endRange" | "shared" = part.source;
+        // @ts-expect-error Native range sources are a closed union.
+        part.source = "start";
+      }
+      for (const format of [formatNumberRange, formatNumberRangeToParts]) {
+        format(1, 2, "en");
+        // @ts-expect-error Start endpoints do not coerce strings.
+        format("1", 2, "en");
+        // @ts-expect-error End endpoints do not coerce strings.
+        format(1, "2", "en");
+        // @ts-expect-error Start endpoints do not accept bigint.
+        format(1n, 2, "en");
+        // @ts-expect-error End endpoints do not accept bigint.
+        format(1, 2n, "en");
+      }
+      for (const format of [translator.formatNumberRange, translator.formatNumberRangeToParts]) {
+        // @ts-expect-error Start endpoints do not coerce strings.
+        format("1", 2);
+        // @ts-expect-error End endpoints do not coerce strings.
+        format(1, "2");
+        // @ts-expect-error Start endpoints do not accept bigint.
+        format(1n, 2);
+        // @ts-expect-error End endpoints do not accept bigint.
+        format(1, 2n);
+      }
+      for (const format of [formatCurrencyRange, formatCurrencyRangeToParts]) {
+        // @ts-expect-error Currency options are required.
+        format(1, 2, "en");
+        // @ts-expect-error Currency codes are required.
+        format(1, 2, "en", {});
+        // @ts-expect-error Start endpoints do not coerce strings.
+        format("1", 2, "en", options);
+        // @ts-expect-error End endpoints do not coerce strings.
+        format(1, "2", "en", options);
+        // @ts-expect-error Start endpoints do not accept bigint.
+        format(1n, 2, "en", options);
+        // @ts-expect-error End endpoints do not accept bigint.
+        format(1, 2n, "en", options);
+      }
+      for (const format of [translator.formatCurrencyRange, translator.formatCurrencyRangeToParts]) {
+        // @ts-expect-error Currency method options are required.
+        format(1, 2);
+        // @ts-expect-error Currency method codes are required.
+        format(1, 2, {});
+        // @ts-expect-error Start endpoints do not coerce strings.
+        format("1", 2, options);
+        // @ts-expect-error End endpoints do not coerce strings.
+        format(1, "2", options);
+        // @ts-expect-error Start endpoints do not accept bigint.
+        format(1n, 2, options);
+        // @ts-expect-error End endpoints do not accept bigint.
+        format(1, 2n, options);
+      }
+      // @ts-expect-error Number range strings are not parts arrays.
+      const wrongNumber: Intl.NumberRangeFormatPart[] = formatNumberRange(1, 2, "en");
+      // @ts-expect-error Currency range strings are not parts arrays.
+      const wrongCurrency: Intl.NumberRangeFormatPart[] = formatCurrencyRange(1, 2, "en", options);
+      // @ts-expect-error Number range parts are not strings.
+      const wrongNumberParts: string = formatNumberRangeToParts(1, 2, "en");
+      // @ts-expect-error Currency range parts are not strings.
+      const wrongCurrencyParts: string = formatCurrencyRangeToParts(1, 2, "en", options);
+      // @ts-expect-error Number range method strings are not parts arrays.
+      const wrongMethodNumber: Intl.NumberRangeFormatPart[] = translator.formatNumberRange(1, 2);
+      // @ts-expect-error Currency range method strings are not parts arrays.
+      const wrongMethodCurrency: Intl.NumberRangeFormatPart[] = translator.formatCurrencyRange(1, 2, options);
+      // @ts-expect-error Number range method parts are not strings.
+      const wrongMethodNumberParts: string = translator.formatNumberRangeToParts(1, 2);
+      // @ts-expect-error Currency range method parts are not strings.
+      const wrongMethodCurrencyParts: string = translator.formatCurrencyRangeToParts(1, 2, options);
+      `,
+    ],
+    [
       "typed-lookup",
       ["ES2023"],
       `
@@ -520,15 +755,20 @@ try {
     ],
   ]) {
     writeFileSync(join(consumer, `${name}.ts`), source);
-    const config = join(consumer, `${name}.json`);
-    writeFileSync(
-      config,
-      JSON.stringify({ compilerOptions: { ...compilerOptions, lib }, files: [`${name}.ts`] }),
-    );
-    execFileSync(process.execPath, [typescript, "--project", config], {
-      cwd: consumer,
-      stdio: "inherit",
-    });
+    for (const libraries of name === "numeric-ranges" ? [lib, ["ES2022", "ES2023.Intl"]] : [lib]) {
+      const config = join(consumer, `${name}.json`);
+      writeFileSync(
+        config,
+        JSON.stringify({
+          compilerOptions: { ...compilerOptions, lib: libraries },
+          files: [`${name}.ts`],
+        }),
+      );
+      execFileSync(process.execPath, [typescript, "--project", config], {
+        cwd: consumer,
+        stdio: "inherit",
+      });
+    }
   }
 } finally {
   rmSync(temporary, { recursive: true, force: true });

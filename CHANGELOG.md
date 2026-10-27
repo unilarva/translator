@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add DOM-free `formatNumberRange()`, `formatNumberRangeToParts()`, `formatCurrencyRange()`, and
+  `formatCurrencyRangeToParts()` helpers and matching Translator methods. Reuse family options,
+  defaults, and formatter caches with finite number endpoints only, without coercion. Preserve native
+  descending ranges, signed zero, equal/rounded approximation, and shared affixes. Range parts are
+  fresh mutable `Intl.NumberRangeFormatPart[]` and records, retaining native `source` metadata and
+  `approximatelySign`. Methods log original failures with operation-specific range events before
+  rethrowing the identical error; standalone helpers throw without logging. Missing native
+  `Intl.NumberFormat.prototype.formatRange` or `formatRangeToParts` produces a method-specific
+  call-time `TypeError` with runtime/polyfill guidance, without breaking imports or unrelated
+  operations. No fallback, polyfill, dependency, DOM behavior, or state events are added; date and
+  clock ranges remain future work.
 - Add DOM-free `formatNumberToParts()`, `formatCurrencyToParts()`, `formatRelativeTimeToParts()`,
   `formatDateToParts()`, `formatTimeToParts()`, and `formatWeekdayToParts()` helpers and matching
   Translator methods. Results are fresh, mutable, caller-owned native parts

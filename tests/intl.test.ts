@@ -15,8 +15,12 @@ import { Window } from "happy-dom";
 
 import {
   Translator,
+  formatCurrencyRange,
+  formatCurrencyRangeToParts,
   formatCurrencyToParts,
   formatDateToParts,
+  formatNumberRange,
+  formatNumberRangeToParts,
   formatNumberToParts,
   formatRelativeTime,
   formatRelativeTimeToParts,
@@ -40,6 +44,418 @@ import {
   type TimeFormatOptions,
 } from "../src/intl.ts";
 import { asElement, asParentNode } from "./dom-test-utils.ts";
+
+test("numeric ranges preserve native descending, equal, rounded, signed-zero and affix semantics", () => {
+  const choices: NumberFormatOptions[] = [
+    {},
+    { notation: "compact" },
+    { style: "percent", signDisplay: "always" },
+    { style: "unit", unit: "kilometer", unitDisplay: "long" },
+    { maximumFractionDigits: 0, roundingMode: "halfEven", useGrouping: "min2" },
+    { minimumFractionDigits: 2, maximumFractionDigits: 2, roundingIncrement: 5 },
+    { minimumFractionDigits: 2, trailingZeroDisplay: "stripIfInteger" },
+    { maximumFractionDigits: 1, maximumSignificantDigits: 2, roundingPriority: "morePrecision" },
+  ];
+  for (const language of ["en-x-rnative", "fi-x-rnative", "ar-x-rnative"]) {
+    for (const options of choices) {
+      const native = new Intl.NumberFormat(language, options);
+      const currency = new Intl.NumberFormat(language, {
+        ...options,
+        style: "currency",
+        currency: "EUR",
+      });
+      for (const [start, end] of [
+        [-1234.5, 5678.9],
+        [5, 1],
+        [-1, -5],
+        [1, 1],
+        [1.21, 1.24],
+        [-0, 0],
+        [0, -0],
+        [-0, -0],
+        [0, 0],
+      ]) {
+        assert.equal(
+          formatNumberRange(start, end, language, options),
+          native.formatRange(start, end),
+        );
+        assert.deepEqual(
+          formatNumberRangeToParts(start, end, language, options),
+          native.formatRangeToParts(start, end),
+        );
+        assert.equal(
+          formatCurrencyRange(start, end, language, { ...options, currency: "eur" }),
+          currency.formatRange(start, end),
+        );
+        assert.deepEqual(
+          formatCurrencyRangeToParts(start, end, language, { ...options, currency: "eur" }),
+          currency.formatRangeToParts(start, end),
+        );
+      }
+    }
+    for (const currency of ["jpy", "kwd", "zzz"]) {
+      const native = new Intl.NumberFormat(language, {
+        style: "currency",
+        currency: currency.toUpperCase(),
+      });
+      assert.equal(
+        formatCurrencyRange(1.234, 5.678, language, { currency }),
+        native.formatRange(1.234, 5.678),
+      );
+      assert.deepEqual(
+        formatCurrencyRangeToParts(1.234, 5.678, language, { currency }),
+        native.formatRangeToParts(1.234, 5.678),
+      );
+    }
+  }
+  assert.deepEqual(
+    new Set(formatNumberRangeToParts(1, 5, "en-x-rmeta").map(part => part.source)),
+    new Set(["startRange", "endRange", "shared"]),
+  );
+  for (const parts of [
+    formatNumberRangeToParts(1, 1, "en-x-rmeta"),
+    formatNumberRangeToParts(1.21, 1.24, "en-x-rmeta", { maximumFractionDigits: 0 }),
+    formatCurrencyRangeToParts(1, 1, "en-x-rmeta", { currency: "EUR" }),
+  ]) {
+    assert.ok(parts.some(part => part.type === "approximatelySign"));
+    assert.ok(parts.every(part => part.source === "shared"));
+  }
+});
+
+test("numeric range methods resolve locales without catalog fallback, events or option mutation", () => {
+  const entries: TranslatorLogEntry[] = [];
+  const translator = new Translator({
+    language: "en-x-rmethod",
+    fallbackLanguage: "ar",
+    logger: entry => entries.push(entry),
+  });
+  translator.setTranslation("item", { ar: "Fallback only" });
+  let notifications = 0;
+  translator.subscribe(() => notifications++);
+  translator.subscribeCatalog(() => notifications++);
+  translator.subscribeLanguages(() => notifications++);
+  entries.length = 0;
+  for (const language of ["en-x-rmethod", "fi-x-rmethod"]) {
+    translator.setLanguage(language);
+    assert.equal(translator.formatNumberRange(5, 1), formatNumberRange(5, 1, language));
+    assert.deepEqual(
+      translator.formatNumberRangeToParts(-0, 0),
+      formatNumberRangeToParts(-0, 0, language),
+    );
+    assert.equal(
+      translator.formatCurrencyRange(1, 5, { currency: "eur" }),
+      formatCurrencyRange(1, 5, language, { currency: "EUR" }),
+    );
+    assert.deepEqual(
+      translator.formatCurrencyRangeToParts(1, 5, { currency: "eur" }),
+      formatCurrencyRangeToParts(1, 5, language, { currency: "EUR" }),
+    );
+  }
+  const number = Object.freeze({ language: " en_GB ", maximumFractionDigits: 1 });
+  const currency = Object.freeze({ ...number, currency: "eur", style: "percent" as const });
+  assert.equal(
+    translator.formatNumberRange(1, 5, number),
+    formatNumberRange(1, 5, "!invalid!", number),
+  );
+  assert.deepEqual(
+    translator.formatNumberRangeToParts(1, 5, number),
+    formatNumberRangeToParts(1, 5, "!invalid!", number),
+  );
+  assert.equal(
+    translator.formatCurrencyRange(1, 5, currency),
+    formatCurrencyRange(1, 5, "!invalid!", currency),
+  );
+  assert.deepEqual(
+    translator.formatCurrencyRangeToParts(1, 5, currency),
+    formatCurrencyRangeToParts(1, 5, "!invalid!", currency),
+  );
+  assert.equal(translator.getLanguage(), "fi-x-rmethod");
+  assert.equal(translator.translateKey("item"), "Fallback only");
+  assert.equal(notifications, 1);
+  assert.equal(currency.currency, "eur");
+  assert.equal(currency.style, "percent");
+  assert.ok(entries.every(entry => entry.component !== "intl"));
+});
+
+test("numeric range parts and source metadata are fresh mutable native results", () => {
+  const translator = new Translator({ language: "en-x-rowner" });
+  for (const parts of [
+    () => formatNumberRangeToParts(1, 5, "en-x-rowner"),
+    () => formatCurrencyRangeToParts(1, 5, "en-x-rowner", { currency: "EUR" }),
+    () => translator.formatNumberRangeToParts(1, 5),
+    () => translator.formatCurrencyRangeToParts(1, 5, { currency: "EUR" }),
+  ]) {
+    const first = parts();
+    const second = parts();
+    assert.deepEqual(first, second);
+    assert.notEqual(first, second);
+    assert.equal(Object.isFrozen(first), false);
+    for (let index = 0; index < first.length; index++) {
+      assert.notEqual(first[index], second[index]);
+      assert.equal(Object.isFrozen(first[index]), false);
+      first[index].source = "shared";
+      first[index].value = "changed";
+    }
+    first.splice(0);
+    assert.deepEqual(parts(), second);
+  }
+});
+
+test("numeric ranges reject either invalid endpoint without coercion and validate currency/locale/options", () => {
+  const translator = new Translator();
+  const object = {
+    valueOf() {
+      throw new Error("Must not coerce endpoints");
+    },
+  };
+  const calls = [
+    (start: number, end: number) => formatNumberRange(start, end, "en-x-rinvalid"),
+    (start: number, end: number) => formatNumberRangeToParts(start, end, "en-x-rinvalid"),
+    (start: number, end: number) =>
+      formatCurrencyRange(start, end, "en-x-rinvalid", { currency: "EUR" }),
+    (start: number, end: number) =>
+      formatCurrencyRangeToParts(start, end, "en-x-rinvalid", { currency: "EUR" }),
+    (start: number, end: number) => translator.formatNumberRange(start, end),
+    (start: number, end: number) => translator.formatNumberRangeToParts(start, end),
+    (start: number, end: number) => translator.formatCurrencyRange(start, end, { currency: "EUR" }),
+    (start: number, end: number) =>
+      translator.formatCurrencyRangeToParts(start, end, { currency: "EUR" }),
+  ];
+  for (const value of [NaN, Infinity, -Infinity, "1", null, undefined, 1n, new Number(1), object]) {
+    for (const call of calls) {
+      assert.throws(() => call(value as number, 1), /Range start must be a finite number/);
+      assert.throws(() => call(1, value as number), /Range end must be a finite number/);
+    }
+  }
+  for (const currency of ["EU", "EURO", "€€€", " E "]) {
+    assert.throws(() => formatCurrencyRange(1, 5, "en", { currency }), RangeError);
+    assert.throws(() => formatCurrencyRangeToParts(1, 5, "en", { currency }), RangeError);
+  }
+  // @ts-expect-error Currency options remain required.
+  assert.throws(() => formatCurrencyRange(1, 5, "en"), RangeError);
+  // @ts-expect-error Currency range parts also require options.
+  assert.throws(() => formatCurrencyRangeToParts(1, 5, "en"), RangeError);
+  for (const language of ["", " ", "invalid_!"]) {
+    assert.throws(() => formatNumberRange(1, 5, language), RangeError);
+    assert.throws(() => formatNumberRangeToParts(1, 5, language), RangeError);
+    assert.throws(() => formatCurrencyRange(1, 5, language, { currency: "EUR" }), RangeError);
+    assert.throws(
+      () => formatCurrencyRangeToParts(1, 5, language, { currency: "EUR" }),
+      RangeError,
+    );
+  }
+  assert.throws(() => formatNumberRange(1, 5, "en", { minimumFractionDigits: -1 }), RangeError);
+  assert.throws(
+    () => formatNumberRangeToParts(1, 5, "en", { minimumFractionDigits: -1 }),
+    RangeError,
+  );
+  assert.throws(
+    () => formatCurrencyRange(1, 5, "en", { currency: "EUR", maximumFractionDigits: -1 }),
+    RangeError,
+  );
+  assert.throws(
+    () => formatCurrencyRangeToParts(1, 5, "en", { currency: "EUR", maximumFractionDigits: -1 }),
+    RangeError,
+  );
+});
+
+test("numeric range diagnostics retain original errors and operation-specific events", t => {
+  const entries: TranslatorLogEntry[] = [];
+  const translator = new Translator({
+    language: "fi",
+    logger(entry) {
+      entries.push(entry);
+      throw new Error("Logger failed");
+    },
+  });
+  const error = new Error("Range option coercion failed");
+  const dynamic = {
+    toString() {
+      throw error;
+    },
+  };
+  const number = { style: dynamic as unknown as "decimal" };
+  const currency = { currency: "EUR", currencyDisplay: dynamic as unknown as "symbol" };
+  for (const call of [
+    () => translator.formatNumberRange(1, 5, number),
+    () => translator.formatNumberRangeToParts(1, 5, number),
+    () => translator.formatCurrencyRange(1, 5, currency),
+    () => translator.formatCurrencyRangeToParts(1, 5, currency),
+    () => formatNumberRange(1, 5, "en", number),
+    () => formatNumberRangeToParts(1, 5, "en", number),
+    () => formatCurrencyRange(1, 5, "en", currency),
+    () => formatCurrencyRangeToParts(1, 5, "en", currency),
+  ])
+    assert.throws(call, thrown => thrown === error);
+  const events = [
+    "number-range-format-failed",
+    "number-range-format-to-parts-failed",
+    "currency-range-format-failed",
+    "currency-range-format-to-parts-failed",
+  ];
+  assert.deepEqual(
+    entries.map(entry => [entry.component, entry.event, entry.error, entry.details]),
+    events.map(event => ["intl", event, error, { language: "fi" }]),
+  );
+  const nativeError = new Error("Native range failure");
+  for (const method of ["formatRange", "formatRangeToParts"] as const) {
+    t.mock.method(Intl.NumberFormat.prototype, method, () => {
+      throw nativeError;
+    });
+  }
+  for (const call of [
+    () => translator.formatNumberRange(1, 5),
+    () => translator.formatNumberRangeToParts(1, 5),
+    () => translator.formatCurrencyRange(1, 5, { currency: "EUR" }),
+    () => translator.formatCurrencyRangeToParts(1, 5, { currency: "EUR" }),
+  ])
+    assert.throws(call, thrown => thrown === nativeError);
+  assert.deepEqual(
+    entries.slice(4).map(entry => [entry.event, entry.error]),
+    events.map(event => [event, nativeError]),
+  );
+});
+
+test("numeric ranges share string/parts caches and retain snapshots and unsafe-coercion bypasses", t => {
+  const Native = Intl.NumberFormat;
+  let constructions = 0;
+  t.mock.method(Intl, "NumberFormat", function (...args: ConstructorParameters<typeof Native>) {
+    constructions++;
+    return new Native(...args);
+  });
+  formatNumber(1, "en-x-rcache", { minimumFractionDigits: 2 });
+  formatNumberToParts(2, "en-x-rcache", { minimumFractionDigits: 2 });
+  formatNumberRange(1, 5, "EN_x_rcache", { minimumFractionDigits: 2 });
+  formatNumberRangeToParts(2, 6, "en-x-rcache", { minimumFractionDigits: 2 });
+  formatCurrency(1, "en-x-rcache", { currency: "eur" });
+  formatCurrencyToParts(2, "en-x-rcache", { currency: "EUR" });
+  formatCurrencyRange(1, 5, "en-x-rcache", { currency: "EUR" });
+  formatCurrencyRangeToParts(2, 6, "en-x-rcache", { currency: "eur" });
+  formatNumberRange(1, 5, "en-x-rcache", { style: "currency", currency: "EUR" });
+  assert.equal(constructions, 2);
+  let reads = 0;
+  const options = {
+    get minimumFractionDigits() {
+      reads++;
+      return 1;
+    },
+  };
+  formatNumberRange(1, 5, "en-x-rreads", options);
+  formatNumberRangeToParts(1, 5, "en-x-rreads", options);
+  let currencyReads = 0;
+  const currencyOptions = {
+    get currency() {
+      currencyReads++;
+      return "eur";
+    },
+    get minimumFractionDigits() {
+      reads++;
+      return 1;
+    },
+  };
+  formatCurrencyRange(1, 5, "en-x-rreads", currencyOptions);
+  formatCurrencyRangeToParts(1, 5, "en-x-rreads", currencyOptions);
+  assert.equal(reads, 4);
+  // Retain the existing validation read followed by the currency option snapshot read.
+  assert.equal(currencyReads, 4);
+  let coercions = 0;
+  const digits = { valueOf: () => ++coercions };
+  const dynamic = { minimumFractionDigits: digits as unknown as number };
+  const before = constructions;
+  assert.equal(
+    formatNumberRange(1, 5, "en-x-rcoerce", dynamic),
+    new Native("en", { minimumFractionDigits: 1 }).formatRange(1, 5),
+  );
+  assert.deepEqual(
+    formatNumberRangeToParts(1, 5, "en-x-rcoerce", dynamic),
+    new Native("en", { minimumFractionDigits: 2 }).formatRangeToParts(1, 5),
+  );
+  formatCurrencyRange(1, 5, "en-x-rcoerce", { ...dynamic, currency: "EUR" });
+  formatCurrencyRangeToParts(1, 5, "en-x-rcoerce", { ...dynamic, currency: "EUR" });
+  assert.equal(coercions, 4);
+  assert.equal(constructions - before, 4);
+});
+
+test("missing numeric range methods are isolated call-time capabilities, including cached formatters", async t => {
+  const prototype = Intl.NumberFormat.prototype;
+  const methods = ["formatRange", "formatRangeToParts"] as const;
+  const descriptors = methods.map(method => Object.getOwnPropertyDescriptor(prototype, method)!);
+  t.after(() =>
+    methods.forEach((method, index) =>
+      Object.defineProperty(prototype, method, descriptors[index]),
+    ),
+  );
+  // Warm the shared cache before removing host methods; capabilities must not be cached or bound.
+  formatNumberRange(1, 5, "en-x-rmissing");
+  formatNumberRangeToParts(1, 5, "en-x-rmissing");
+  const entries: TranslatorLogEntry[] = [];
+  const translator = new Translator({
+    language: "en-x-rmissing",
+    logger: entry => entries.push(entry),
+  });
+  for (const [index, method] of methods.entries()) {
+    Object.defineProperty(prototype, method, { ...descriptors[index], value: undefined });
+    const modulePath = `../src/index.ts?missing-${method}`;
+    const imported = await import(modulePath);
+    const calls =
+      method === "formatRange"
+        ? [
+            () => imported.formatNumberRange(1, 5, "en-x-rmissing"),
+            () => imported.formatCurrencyRange(1, 5, "en", { currency: "EUR" }),
+            () => translator.formatNumberRange(1, 5),
+            () => translator.formatCurrencyRange(1, 5, { currency: "EUR" }),
+          ]
+        : [
+            () => imported.formatNumberRangeToParts(1, 5, "en-x-rmissing"),
+            () => imported.formatCurrencyRangeToParts(1, 5, "en", { currency: "EUR" }),
+            () => translator.formatNumberRangeToParts(1, 5),
+            () => translator.formatCurrencyRangeToParts(1, 5, { currency: "EUR" }),
+          ];
+    const before = entries.length;
+    for (const call of calls)
+      assert.throws(call, {
+        name: "TypeError",
+        message: new RegExp(
+          `Intl\\.NumberFormat\\.prototype\\.${method} is unavailable.*supporting runtime.*polyfill`,
+        ),
+      });
+    assert.equal(entries.length - before, 2);
+    assert.ok(entries.slice(before).every(entry => entry.error instanceof TypeError));
+    assert.equal(typeof imported.formatNumber(1, "en"), "string");
+    assert.equal(typeof translator.formatCurrency(1, { currency: "EUR" }), "string");
+    assert.deepEqual(
+      imported.formatNumberToParts(1, "en"),
+      new Intl.NumberFormat("en").formatToParts(1),
+    );
+    assert.deepEqual(
+      translator.formatCurrencyToParts(1, { currency: "EUR" }),
+      formatCurrencyToParts(1, "en", { currency: "EUR" }),
+    );
+    assert.equal(typeof imported.formatDate("2026-10-27", "en"), "string");
+    assert.ok(imported.formatTimeToParts("09:05", "en").length > 0);
+    assert.ok(imported.formatRelativeTimeToParts(1, "day", "en").length > 0);
+    if (method === "formatRange") {
+      assert.deepEqual(
+        translator.formatNumberRangeToParts(1, 5),
+        formatNumberRangeToParts(1, 5, "en"),
+      );
+      assert.ok(imported.formatCurrencyRangeToParts(1, 5, "en", { currency: "EUR" }).length > 0);
+    } else {
+      assert.equal(translator.formatNumberRange(1, 5), formatNumberRange(1, 5, "en"));
+      assert.equal(typeof imported.formatCurrencyRange(1, 5, "en", { currency: "EUR" }), "string");
+    }
+    Object.defineProperty(prototype, method, descriptors[index]);
+  }
+  assert.deepEqual(
+    entries.map(entry => entry.event),
+    [
+      "number-range-format-failed",
+      "currency-range-format-failed",
+      "number-range-format-to-parts-failed",
+      "currency-range-format-to-parts-failed",
+    ],
+  );
+});
 
 test("number and currency parts preserve native output and newly typed rounding options", () => {
   const choices: NumberFormatOptions[] = [

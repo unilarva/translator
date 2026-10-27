@@ -44,6 +44,8 @@ servers, workers, and command-line tools; browser integration is isolated in
   formatted strings. Calendar dates and clock times preserve fields; Date instants require an
   explicit output time zone through the separate datetime APIs. Native number, currency, calendar,
   datetime, clock-time, and recurring contiguous weekday ranges include strings and source-tagged parts.
+  The opt-in `intlDomExtension()` renders number, currency, calendar-date, clock-time, and weekday
+  singles/ranges as native text, with calendar/clock style options and configurable marker prefixes.
 - **Scoped UIs and synchronized language controls.** Bind a document or subtree, use independent
   translators for previews, and connect existing native selects or details dropdowns to an observable
   language registry. Direction synchronization is opt-in; styling and persistence stay application-owned.
@@ -225,6 +227,13 @@ language detection, persistence, routing, and styling. The guide covers
 [opt-in document direction](./USAGE.md#dom-binding), and
 [formatting](./USAGE.md#formatting-extension) and
 [semantic rich-text extensions](./USAGE.md#semantic-rich-translations).
+
+The existing `intlDomExtension()` accepts complete `data-i18n-KIND-range-start` and
+`data-i18n-KIND-range-end` pairs for `number`, `currency`, `date`, `time`, and `weekday`.
+Each element selects exactly one single value or complete pair; output is one native string assigned
+to `textContent`, not parts or HTML. Date styles support `full`/`long`/`medium`/`short`; clock styles
+support `short`/`medium`. See the [formatting extension](./USAGE.md#formatting-extension) for option
+applicability and validation. Datetime-instant markers and timestamp parsing are not supported yet.
 
 Details dropdown bindings prevent default button actions for accepted language choices, including
 form submission. Consumer-owned choice buttons should still declare `type="button"` for safety

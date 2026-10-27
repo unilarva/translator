@@ -15,6 +15,7 @@
  */
 
 import type { TranslatorDomExtension } from "./dom.js";
+import type { DateFormatOptions, TimeFormatOptions, WeekdayFormatOptions } from "./intl.js";
 
 /** Options for the opt-in Intl formatting DOM extension. */
 export interface IntlDomExtensionOptions {
@@ -53,22 +54,34 @@ function fractionDigits(element: Element, attribute: string): number | undefined
 }
 
 /**
- * Creates a text-only DOM extension for number, currency, date, time, and weekday values.
+ * Creates a text-only DOM extension for number, currency, date, time, and weekday values/ranges.
  * Register the returned extension in `bindTranslator` options to opt in to its
  * synchronous update/disposal lifecycle. All rendered output replaces textContent,
  * never interpreting it as HTML; the binding excludes template and script/style targets.
  *
  * @remarks
- * Each matching element must have exactly one value marker: `data-i18n-number`,
- * `-currency`, `-date`, `-time`, or `-weekday`. Number and currency values accept
+ * Each matching element must have exactly one single marker (`data-i18n-number`,
+ * `-currency`, `-date`, `-time`, or `-weekday`) or one complete pair of
+ * `data-i18n-{kind}-range-start` and `data-i18n-{kind}-range-end`. Both endpoints
+ * must be nonempty; orphan ends and mixed kinds fail without replacing text.
+ * Ranges use one native localized string, without custom separators or parts rendering.
+ * Number and currency values accept
  * non-blank finite Number-compatible strings. Currency requires `-currency-code`
  * with a three-letter ISO 4217 code. Dates require valid strict `YYYY-MM-DD`
  * calendar strings and are rendered without time-zone shifts, with numeric year,
  * month, and day by default; `-year` accepts `numeric` or `2-digit`.
+ * `-date-style` accepts `full`, `long`, `medium`, or `short`, mutually exclusive
+ * with `-year` by presence, and replaces the calendar component defaults.
  * Times require `HH:MM` or `HH:MM:SS` in the 24-hour input range and render a
- * locale-dependent clock without zone conversion; explicit seconds are displayed.
+ * locale-dependent clock without zone conversion; explicit seconds on either
+ * range endpoint are displayed by default. `-time-style` accepts `short` or
+ * `medium` and replaces clock component/seconds defaults.
  * Weekdays are integers from Monday 0 through Sunday 6; `-weekday-width` accepts
- * `long` (default), `short`, or `narrow`.
+ * `long` (default), `short`, or `narrow`. Weekday ranges run forward through
+ * Sunday when needed; equal endpoints mean one weekday, not a full week.
+ * Style tokens are exact and untrimmed. Calendar targets forbid `-time-style`,
+ * clocks forbid `-date-style`, weekdays forbid both styles, and all three forbid
+ * `-time-zone`, even when empty. Numeric/currency targets ignore temporal options.
  *
  * `data-i18n-format-language` overrides the active translator language.
  * `-minimum-fraction-digits` and `-maximum-fraction-digits` accept unsigned decimal
@@ -79,7 +92,7 @@ function fractionDigits(element: Element, attribute: string): number | undefined
  * translation keys or the binding's interpolation snapshot.
  *
  * @param options - Marker configuration; defaults to the `i18n` prefix.
- * @returns Stateless synchronous extension with a selector for all five value markers.
+ * @returns Stateless synchronous extension matching singles and both range endpoints.
  * Its update callback throws on conflicting markers, missing currency code, invalid
  * options/values, or Intl formatting failure. A translator DOM binding catches and
  * logs those errors; validation/formatting completes before replacing existing text.
@@ -104,6 +117,9 @@ export function intlDomExtension(options: IntlDomExtensionOptions = {}): Transla
     minimumFractionDigits: `${base}-minimum-fraction-digits`,
     maximumFractionDigits: `${base}-maximum-fraction-digits`,
     year: `${base}-year`,
+    dateStyle: `${base}-date-style`,
+    timeStyle: `${base}-time-style`,
+    timeZone: `${base}-time-zone`,
   } as const;
   const valueMarkers = [
     markers.number,
@@ -112,50 +128,99 @@ export function intlDomExtension(options: IntlDomExtensionOptions = {}): Transla
     markers.time,
     markers.weekday,
   ];
+  const rangeMarkers = valueMarkers.map(attribute => ({
+    start: `${attribute}-range-start`,
+    end: `${attribute}-range-end`,
+  }));
 
   return {
-    selector: valueMarkers.map(attribute => `[${attribute}]`).join(","),
-    /** Validates one value marker and delegates locale-sensitive formatting to the translator. */
+    selector: [...valueMarkers, ...rangeMarkers.flatMap(({ start, end }) => [start, end])]
+      .map(attribute => `[${attribute}]`)
+      .join(","),
+    /** Validates one single or complete range kind before delegating native text formatting. */
     update(element, { translator }): void {
       const present = valueMarkers.filter(attribute => element.hasAttribute(attribute));
-      if (present.length !== 1) {
-        throw new Error("Intl formatting elements must contain exactly one value marker");
+      const ranges = rangeMarkers.filter(
+        ({ start, end }) => element.hasAttribute(start) || element.hasAttribute(end),
+      );
+      if (present.length + ranges.length !== 1) {
+        throw new Error("Intl formatting elements must contain exactly one single or range kind");
       }
+      const range = ranges[0];
+      const startAttribute = range?.start ?? present[0]!;
+      const start = range ? element.getAttribute(startAttribute) : null;
+      const end = range ? element.getAttribute(range.end) : null;
+      if (range && (start === null || end === null || !start.trim() || !end.trim())) {
+        throw new Error(`${range.start} and ${range.end} must both contain nonempty endpoints`);
+      }
+      const kind = range ? valueMarkers[rangeMarkers.indexOf(range)]! : present[0]!;
       const language = element.getAttribute(markers.language) ?? undefined;
       const minimumFractionDigits = fractionDigits(element, markers.minimumFractionDigits);
       const maximumFractionDigits = fractionDigits(element, markers.maximumFractionDigits);
 
-      if (present[0] === markers.number) {
-        element.textContent = translator.formatNumber(
-          parseNumber(element.getAttribute(markers.number)!, markers.number),
-          { language, minimumFractionDigits, maximumFractionDigits },
-        );
+      if (kind === markers.number) {
+        const value = parseNumber(range ? start! : element.getAttribute(kind)!, startAttribute);
+        const options = { language, minimumFractionDigits, maximumFractionDigits };
+        element.textContent = range
+          ? translator.formatNumberRange(value, parseNumber(end!, range.end), options)
+          : translator.formatNumber(value, options);
         return;
       }
-      if (present[0] === markers.currency) {
+      if (kind === markers.currency) {
         const currency = element.getAttribute(markers.currencyCode);
         if (!currency) throw new Error(`${markers.currencyCode} is required for currency values`);
-        element.textContent = translator.formatCurrency(
-          parseNumber(element.getAttribute(markers.currency)!, markers.currency),
-          { currency, language, minimumFractionDigits, maximumFractionDigits },
-        );
+        const value = parseNumber(range ? start! : element.getAttribute(kind)!, startAttribute);
+        const options = { currency, language, minimumFractionDigits, maximumFractionDigits };
+        element.textContent = range
+          ? translator.formatCurrencyRange(value, parseNumber(end!, range.end), options)
+          : translator.formatCurrency(value, options);
         return;
       }
-      if (present[0] === markers.date) {
+      const forbidden: string[] = [markers.timeZone];
+      if (kind !== markers.date) forbidden.push(markers.dateStyle);
+      if (kind !== markers.time) forbidden.push(markers.timeStyle);
+      for (const attribute of forbidden) {
+        if (element.hasAttribute(attribute)) {
+          throw new Error(`${attribute} is not supported for this temporal kind`);
+        }
+      }
+      if (kind === markers.date) {
         const year = element.getAttribute(markers.year);
         if (year !== null && year !== "numeric" && year !== "2-digit") {
           throw new Error(`${markers.year} must be 'numeric' or '2-digit'`);
         }
-        element.textContent = translator.formatDate(element.getAttribute(markers.date)!, {
+        const dateStyle = element.getAttribute(markers.dateStyle);
+        if (
+          dateStyle !== null &&
+          dateStyle !== "full" &&
+          dateStyle !== "long" &&
+          dateStyle !== "medium" &&
+          dateStyle !== "short"
+        ) {
+          throw new Error(`${markers.dateStyle} must be 'full', 'long', 'medium', or 'short'`);
+        }
+        if (dateStyle !== null && year !== null) {
+          throw new Error(`${markers.dateStyle} and ${markers.year} are mutually exclusive`);
+        }
+        const options: DateFormatOptions = {
           language,
           ...(year ? { year } : {}),
-        });
+          ...(dateStyle ? { dateStyle } : {}),
+        };
+        element.textContent = range
+          ? translator.formatDateRange(start!, end!, options)
+          : translator.formatDate(element.getAttribute(kind)!, options);
         return;
       }
-      if (present[0] === markers.time) {
-        element.textContent = translator.formatTime(element.getAttribute(markers.time)!, {
-          language,
-        });
+      if (kind === markers.time) {
+        const timeStyle = element.getAttribute(markers.timeStyle);
+        if (timeStyle !== null && timeStyle !== "short" && timeStyle !== "medium") {
+          throw new Error(`${markers.timeStyle} must be 'short' or 'medium'`);
+        }
+        const options: TimeFormatOptions = { language, ...(timeStyle ? { timeStyle } : {}) };
+        element.textContent = range
+          ? translator.formatTimeRange(start!, end!, options)
+          : translator.formatTime(element.getAttribute(kind)!, options);
         return;
       }
 
@@ -163,10 +228,11 @@ export function intlDomExtension(options: IntlDomExtensionOptions = {}): Transla
       if (width !== null && width !== "long" && width !== "short" && width !== "narrow") {
         throw new Error(`${markers.weekdayWidth} must be 'long', 'short', or 'narrow'`);
       }
-      element.textContent = translator.formatWeekday(
-        parseNumber(element.getAttribute(markers.weekday)!, markers.weekday),
-        { language, ...(width ? { width } : {}) },
-      );
+      const value = parseNumber(range ? start! : element.getAttribute(kind)!, startAttribute);
+      const options: WeekdayFormatOptions = { language, ...(width ? { width } : {}) };
+      element.textContent = range
+        ? translator.formatWeekdayRange(value, parseNumber(end!, range.end), options)
+        : translator.formatWeekday(value, options);
     },
   };
 }

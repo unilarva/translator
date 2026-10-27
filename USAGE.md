@@ -918,7 +918,8 @@ a generic migration. Calendar calls must remove forbidden options, even properti
 
 If host-zone presentation is genuinely intended, the application can resolve its chosen zone and
 pass it explicitly. Do not automatically replace an intended location's zone with the viewer's zone.
-These changes add no DOM markers and do not alter existing clock formatting or DOM binding behavior.
+The datetime APIs have no DOM markers; field-based singles and ranges use the opt-in
+[formatting extension](#formatting-extension).
 
 ### Datetime Instants
 
@@ -1203,7 +1204,8 @@ native order, literals, part types (including `approximatelySign`), and each par
 `"startRange"`, `"endRange"`, or `"shared"`. Shared parts and approximation signs need not belong to
 one endpoint. Only formatters are cached, never endpoints or results; mutating a result cannot affect
 later calls. Parts are structured text, not HTML or a safe-HTML representation. Rendering and escaping
-remain application-owned, with no new DOM markers or automatic updates.
+for parts remain application-owned, with no parts-rendering DOM markers or automatic updates.
+String ranges can instead use the opt-in [formatting extension](#formatting-extension).
 
 Each string range call checks only `Intl.NumberFormat.prototype.formatRange`; each range-parts call
 checks only `Intl.NumberFormat.prototype.formatRangeToParts`. Checks occur at call time, never at
@@ -1298,8 +1300,9 @@ methods the active locale, unless `options.language` overrides it; translation f
 
 Range-parts arrays and records are fresh, mutable, caller-owned native results, preserving order,
 literal text, and `source` (`startRange`, `endRange`, `shared`). Formatters alone are cached, never
-endpoints or results. No string splitting, filtering, concatenation, HTML, DOM markers, or state
-events are added. Equal date/clock ranges can retain native string-versus-parts whitespace
+endpoints or results. No string splitting, filtering, concatenation, HTML, or state
+events are added. String ranges also have opt-in [DOM markers](#formatting-extension), not a parts
+rendering mode. Equal date/clock ranges can retain native string-versus-parts whitespace
 differences; do not normalize returned literals or assume joining parts reproduces strings byte-for-byte.
 
 Each call checks only its requested `Intl.DateTimeFormat.prototype.formatRange` or
@@ -1383,7 +1386,8 @@ dependency.
 Standalone helpers throw without logging. Methods safely log original failures as
 `weekday-range-format-failed` or `weekday-range-format-to-parts-failed`, then rethrow the identical
 error even if logging fails. Calls do not change translator settings or emit language, catalog, or
-registry events. These core APIs add no DOM markers or automatic UI refreshes.
+registry events. Core calls do not refresh UIs; the opt-in [formatting extension](#formatting-extension)
+provides weekday range string markers, not parts rendering.
 
 ### Relative Time And Plural Selection
 
@@ -1845,17 +1849,108 @@ const binding = bindTranslator(translator, document.documentElement, {
 <span data-i18n-weekday="0" data-i18n-weekday-width="short"></span>
 ```
 
-Optional `data-i18n-format-language` overrides the active language. An element must select exactly
-one formatting kind. Formatted output is always assigned through `textContent`; invalid marker
-values are reported through the binding logger. Minimum and maximum fraction-digit markers accept
-unsigned decimal digits from `0` through `20` (leading zeros are allowed); blank values, surrounding
-whitespace, signs, exponents, and hexadecimal notation are invalid. This conservative DOM-marker range
-is narrower than options supported by some newer host `Intl` implementations.
+The same `intlDomExtension()` supports these single markers and complete endpoint pairs:
 
-There are no built-in range, datetime-instant, relative-time, or plural-selection markers. The
-calendar/instant API split and weekday core ranges do not add markers or change existing single-value DOM behavior.
-Call the core helpers from
-application code; application-owned rendering and update scheduling remain explicit.
+| Kind          | Single value         | Range start                      | Range end                      |
+| ------------- | -------------------- | -------------------------------- | ------------------------------ |
+| Number        | `data-i18n-number`   | `data-i18n-number-range-start`   | `data-i18n-number-range-end`   |
+| Currency      | `data-i18n-currency` | `data-i18n-currency-range-start` | `data-i18n-currency-range-end` |
+| Calendar date | `data-i18n-date`     | `data-i18n-date-range-start`     | `data-i18n-date-range-end`     |
+| Clock time    | `data-i18n-time`     | `data-i18n-time-range-start`     | `data-i18n-time-range-end`     |
+| Weekday       | `data-i18n-weekday`  | `data-i18n-weekday-range-start`  | `data-i18n-weekday-range-end`  |
+
+```html
+<span data-i18n-number-range-start="1000" data-i18n-number-range-end="2000"></span>
+<span
+  data-i18n-currency-range-start="8"
+  data-i18n-currency-range-end="12"
+  data-i18n-currency-code="EUR"
+></span>
+<span
+  data-i18n-date-range-start="2026-09-30"
+  data-i18n-date-range-end="2026-10-02"
+  data-i18n-date-style="long"
+></span>
+<span
+  data-i18n-time-range-start="09:00"
+  data-i18n-time-range-end="17:00"
+  data-i18n-time-style="short"
+></span>
+<span data-i18n-weekday-range-start="4" data-i18n-weekday-range-end="0"></span>
+```
+
+An element must select **exactly one single-value kind or one complete range pair**. A pair is one
+kind, not two independent values. Missing or empty endpoints, orphan ends, mixed range families,
+multiple singles, and any single-plus-range combination are errors. Both start and end attributes
+participate in matching, so an end-only range is diagnosed. Option attributes alone do not create a
+formatting target. Validation/formatting failures leave that element's existing content unchanged,
+are reported through the binding logger, and do not prevent valid sibling targets from updating.
+
+Number/currency values use nonblank finite Number-compatible strings at this DOM boundary (unlike
+the number-only core APIs). Calendars require strict valid `YYYY-MM-DD`, never timestamps. Clocks
+require `HH:MM` or `HH:MM:SS`; reversed clock ranges fail, with no overnight inference. Calendar
+ranges also reject reversed endpoints. Weekdays use Monday-zero indices `0` through `6`; descending
+pairs wrap forward through Sunday, and equal endpoints mean one weekday, not a whole week.
+
+Options are shared between singles and ranges; there are no range-only option spellings:
+
+| Attribute                                                                 | Applies to                                               | Contract                                                                                        |
+| ------------------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `data-i18n-format-language`                                               | All kinds                                                | Overrides the active formatting language, not translation fallback.                             |
+| `data-i18n-currency-code`                                                 | Currency                                                 | Required three-letter currency identifier.                                                      |
+| `data-i18n-minimum-fraction-digits` / `data-i18n-maximum-fraction-digits` | Validated for all kinds; applied only to number/currency | Unsigned decimal integer strings `0` through `20`, including leading zeros.                     |
+| `data-i18n-year`                                                          | Calendar date                                            | `numeric` or `2-digit`; incompatible by presence with `date-style`.                             |
+| `data-i18n-weekday-width`                                                 | Weekday                                                  | `long`, `short`, or `narrow`; default `long`.                                                   |
+| `data-i18n-date-style`                                                    | Calendar date                                            | Exact `full`, `long`, `medium`, or `short`.                                                     |
+| `data-i18n-time-style`                                                    | Clock time                                               | Exact `short` or `medium`; replaces component/seconds defaults.                                 |
+| `data-i18n-time-zone`                                                     | No supported temporal target                             | Forbidden by presence on calendar, clock, and weekday targets; does not enable zone conversion. |
+
+Style tokens are case-sensitive and untrimmed; empty, blank, padded, and unknown tokens fail.
+Calendar `date-style` and legacy `year` are mutually exclusive by **attribute presence**, including
+empty attributes. Without a style, calendars retain numeric year/month/day defaults; clocks retain
+hour/minute defaults plus seconds when the single value or either range endpoint explicitly supplies
+seconds, including `:00`. Clock `time-style="short"` omits seconds and `"medium"` includes them,
+replacing those defaults. Calendar styles and clock styles apply equally to singles and ranges.
+
+Calendar targets forbid `time-style` and `time-zone`; clock targets forbid `date-style` and
+`time-zone`; weekday targets forbid both styles and `time-zone`. These prohibitions also use
+presence, including empty attributes. Number/currency targets **ignore and do not read** all three
+new temporal options, even malformed ones. Fraction markers retain their legacy validation for every
+kind: blanks, whitespace, signs, exponents, and hexadecimal notation fail, even on a temporal target
+where fractions are not applied. This `0`-`20` limit is narrower than some newer Intl implementations.
+Other legacy kind-specific attributes retain their existing reads only for their own kind; unrelated
+legacy options do not become new validation errors.
+
+Values come from attributes, not catalog keys or interpolation values. Each range delegates to its
+matching Translator range method and assigns the **one native range string** to `textContent`.
+Native punctuation, spacing, shared fields/affixes, and equal/rounded-equal behavior are preserved;
+there is no custom separator, HTML interpretation, parts mode, or generated part elements. Use core
+parts APIs with an application-owned renderer when structured output is needed.
+
+Every value, endpoint, and option marker supports a custom prefix. The extension and binding prefixes
+are configured independently; configure both when they should share a prefix:
+
+```ts
+const binding = bindTranslator(translator, root, {
+  attributePrefix: "preview",
+  extensions: [intlDomExtension({ attributePrefix: "preview" })],
+});
+```
+
+```html
+<span
+  data-preview-date-range-start="2026-09-30"
+  data-preview-date-range-end="2026-10-02"
+  data-preview-date-style="medium"
+></span>
+```
+
+Initial, manual, language, and enabled catalog refreshes reuse the ordinary binding lifecycle.
+Call `binding.update()` after editing markers or inserting targets; there is no mutation observer.
+Disposal stops later updates. Script/style exclusions, prefix ownership, and template/fragment/shadow
+root boundaries remain those of the binding. There are no datetime-instant, relative-time,
+plural-selection, or parts-rendering DOM markers, and no DOM timestamp parser. Datetime DOM ranges
+are deferred; use the existing explicit-zone datetime APIs with application-owned rendering meanwhile.
 
 ## Semantic Rich Translations
 

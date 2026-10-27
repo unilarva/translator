@@ -14,6 +14,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Window } from "happy-dom";
 import { assertPublishedFiles } from "./packed-files.mjs";
 
 const core = await import("../dist/index.js");
@@ -686,6 +687,259 @@ function assertDateTimeContract(api, translator) {
 
 assertDateTimeContract(core, translator);
 
+/** Exercises the same public DOM contract against built and clean-installed modules. */
+function assertDomRanges(api, dom, Window) {
+  assert.equal("intlDomExtension" in api, false);
+  assert.equal("bindTranslator" in api, false);
+  for (const prefix of ["i18n", "venue-format"]) {
+    const window = new Window();
+    const document = window.document;
+    const root = document.createElement("section");
+    document.body.append(root);
+    const logs = [];
+    const translator = new api.Translator({ language: "en" });
+    const fixtures = [];
+    const invalid = [];
+    const marker = (attributes, parent = root, tag = "span") => {
+      const element = document.createElement(tag);
+      for (const [name, value] of Object.entries(attributes))
+        element.setAttribute(`data-${prefix}-${name}`, value);
+      element.innerHTML = "<b>retained</b>";
+      parent.append(element);
+      return element;
+    };
+    const add = (attributes, expected) => fixtures.push([marker(attributes), expected]);
+    const pair = (kind, start, end) => ({
+      [`${kind}-range-start`]: start,
+      [`${kind}-range-end`]: end,
+    });
+    const calendarStart = new Date("2026-10-03T00:00Z");
+    const calendarEnd = new Date("2026-10-05T00:00Z");
+    const clockStart = new Date("1970-01-01T09:05Z");
+    const clockEnd = new Date("1970-01-01T17:30Z");
+    for (const range of [false, true]) {
+      const operation = range ? "formatRange" : "format";
+      for (const kind of ["number", "currency"]) {
+        const attributes = range ? pair(kind, " 0x10 ", "20.25") : { [kind]: " 0x10 " };
+        const options = {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+          ...(kind === "currency" ? { style: "currency", currency: "EUR" } : {}),
+        };
+        add(
+          {
+            ...attributes,
+            "currency-code": "eur",
+            "minimum-fraction-digits": "02",
+            "maximum-fraction-digits": "2",
+            "format-language": "ja-JP",
+            "date-style": "invalid",
+            "time-style": "",
+            "time-zone": "invalid",
+          },
+          () =>
+            new Intl.NumberFormat("ja-JP", options)[operation](...[16, ...(range ? [20.25] : [])]),
+        );
+      }
+      const date = range ? pair("date", "2026-10-03", "2026-10-05") : { date: "2026-10-03" };
+      for (const style of [undefined, "full", "long", "medium", "short"])
+        add({ ...date, ...(style ? { "date-style": style } : {}) }, language =>
+          new Intl.DateTimeFormat(language, {
+            ...(style
+              ? { dateStyle: style }
+              : { year: "numeric", month: "numeric", day: "numeric" }),
+            timeZone: "UTC",
+          })[operation](...[calendarStart, ...(range ? [calendarEnd] : [])]),
+        );
+      add({ ...date, year: "2-digit", "format-language": "fi" }, () =>
+        new Intl.DateTimeFormat("fi", {
+          year: "2-digit",
+          month: "numeric",
+          day: "numeric",
+          timeZone: "UTC",
+        })[operation](...[calendarStart, ...(range ? [calendarEnd] : [])]),
+      );
+      for (const seconds of [false, true])
+        for (const style of [undefined, "short", "medium"])
+          add(
+            {
+              ...(range
+                ? pair("time", "09:05", seconds ? "17:30:00" : "17:30")
+                : { time: seconds ? "09:05:00" : "09:05" }),
+              ...(style ? { "time-style": style } : {}),
+            },
+            language =>
+              new Intl.DateTimeFormat(language, {
+                ...(style
+                  ? { timeStyle: style }
+                  : {
+                      hour: "numeric",
+                      minute: "2-digit",
+                      ...(seconds ? { second: "2-digit" } : {}),
+                    }),
+                timeZone: "UTC",
+              })[operation](...[clockStart, ...(range ? [clockEnd] : [])]),
+          );
+      for (const width of [undefined, "long", "short", "narrow"])
+        for (const [start, end] of range
+          ? [
+              [0, 4],
+              [4, 0],
+              [6, 6],
+            ]
+          : [[0, 0]])
+          add(
+            {
+              ...(range ? pair("weekday", String(start), String(end)) : { weekday: String(start) }),
+              ...(width ? { "weekday-width": width } : {}),
+            },
+            language =>
+              new Intl.DateTimeFormat(language, { weekday: width ?? "long", timeZone: "UTC" })[
+                operation
+              ](
+                ...[
+                  new Date(Date.UTC(1970, 0, 5 + start)),
+                  ...(range ? [new Date(Date.UTC(1970, 0, 5 + end + (end < start ? 7 : 0)))] : []),
+                ],
+              ),
+          );
+    }
+    for (const [element, expected] of [...fixtures]) {
+      if (element.hasAttribute(`data-${prefix}-format-language`)) continue;
+      add(
+        {
+          ...Object.fromEntries(
+            [...element.attributes].map(attribute => [
+              attribute.name.slice(`data-${prefix}-`.length),
+              attribute.value,
+            ]),
+          ),
+          "format-language": "ja-JP",
+        },
+        () => expected("ja-JP"),
+      );
+    }
+    for (const [kind, start, end] of [
+      ["number", "1", "2"],
+      ["currency", "1", "2"],
+      ["date", "2026-10-03", "2026-10-05"],
+      ["time", "09:05", "17:30"],
+      ["weekday", "0", "4"],
+    ]) {
+      const complete = {
+        ...pair(kind, start, end),
+        ...(kind === "currency" ? { "currency-code": "EUR" } : {}),
+      };
+      for (const attributes of [
+        { [`${kind}-range-start`]: start },
+        { [`${kind}-range-end`]: end },
+        { ...complete, [`${kind}-range-start`]: "" },
+        { ...complete, [`${kind}-range-end`]: " " },
+        { ...complete, [kind]: start },
+        { ...complete, ...pair(kind === "number" ? "weekday" : "number", "0", "1") },
+        { ...complete, [`${kind}-range-end`]: "not a value" },
+        { ...complete, "minimum-fraction-digits": " 2" },
+      ])
+        invalid.push(marker(attributes));
+      if (["number", "currency"].includes(kind)) continue;
+      for (const range of [false, true]) {
+        const value = range ? complete : { [kind]: start };
+        const forbidden =
+          kind === "date"
+            ? ["time-style", "time-zone"]
+            : kind === "time"
+              ? ["date-style", "time-zone"]
+              : ["date-style", "time-style", "time-zone"];
+        for (const option of forbidden)
+          for (const token of ["", "UTC"]) invalid.push(marker({ ...value, [option]: token }));
+        if (kind === "weekday") continue;
+        for (const token of [
+          "",
+          " ",
+          "Short",
+          " short",
+          "short ",
+          "invalid",
+          ...(kind === "time" ? ["full", "long"] : []),
+        ])
+          invalid.push(
+            marker({ ...value, [kind === "date" ? "date-style" : "time-style"]: token }),
+          );
+        if (kind === "date")
+          for (const year of ["", "numeric", "2-digit"])
+            invalid.push(marker({ ...value, "date-style": "short", year }));
+      }
+    }
+    for (const attributes of [
+      pair("date", "2026-10-05", "2026-10-03"),
+      pair("date", "2026-02-30", "2026-10-03"),
+      pair("time", "23:00", "01:00"),
+      pair("weekday", "0", "7"),
+      pair("currency", "1", "2"),
+    ])
+      invalid.push(marker(attributes));
+    const optionsOnly = marker({ "date-style": "invalid", "time-zone": "" });
+    const script = marker(pair("number", "1", "2"), root, "script");
+    const style = marker(pair("number", "1", "2"), root, "style");
+    const template = document.createElement("template");
+    root.append(template);
+    const inert = marker(pair("number", "1", "2"), template.content);
+    const shadow = marker(pair("number", "1", "2"), root.attachShadow({ mode: "open" }));
+    const outside = marker(pair("number", "1", "2"), document.body);
+    const binding = dom.bindTranslator(translator, root, {
+      attributePrefix: "translation",
+      logger: entry => logs.push(entry),
+      extensions: [dom.intlDomExtension(prefix === "i18n" ? {} : { attributePrefix: prefix })],
+    });
+    const check = language => {
+      for (const [element, expected] of fixtures) {
+        assert.equal(element.textContent, expected(language), element.outerHTML);
+        assert.equal(element.children.length, 0, "Formatting must replace markup with text");
+      }
+      for (const element of [...invalid, optionsOnly, script, style, inert, shadow, outside])
+        assert.equal(element.innerHTML, "<b>retained</b>", element.outerHTML);
+    };
+    check("en");
+    assert.equal(
+      logs.filter(entry => entry.event === "dom-extension-failed").length,
+      invalid.length,
+    );
+    translator.setLanguage("fi");
+    check("fi");
+    fixtures[0][0].textContent = "manual content";
+    translator.setTranslation("refresh", { fi: "Catalog refresh" });
+    check("fi");
+    const edited = marker(pair("number", "1", "2"));
+    binding.update();
+    const oldText = edited.textContent;
+    edited.setAttribute(`data-${prefix}-number-range-end`, "9");
+    assert.equal(edited.textContent, oldText);
+    const inserted = marker(pair("weekday", "4", "0"));
+    assert.equal(inserted.textContent, "retained");
+    binding.update();
+    assert.equal(edited.textContent, new Intl.NumberFormat("fi").formatRange(1, 9));
+    assert.equal(
+      inserted.textContent,
+      new Intl.DateTimeFormat("fi", {
+        weekday: "long",
+        timeZone: "UTC",
+      }).formatRange(new Date("1970-01-09T00:00Z"), new Date("1970-01-12T00:00Z")),
+    );
+    const fragment = document.createDocumentFragment();
+    const fragmentValue = marker(pair("number", "1", "2"), fragment);
+    binding.update(fragment);
+    assert.equal(fragmentValue.textContent, new Intl.NumberFormat("fi").formatRange(1, 2));
+    binding.dispose();
+    edited.textContent = "disposed";
+    translator.setLanguage("en");
+    translator.setTranslation("refresh", { en: "After disposal" });
+    binding.update();
+    assert.equal(edited.textContent, "disposed");
+  }
+}
+
+assertDomRanges(core, dom, Window);
+
 const typescriptManifest = fileURLToPath(import.meta.resolve("typescript/package.json"));
 const typescript = resolve(dirname(typescriptManifest), "bin/tsc");
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
@@ -834,6 +1088,38 @@ function temporalConsumerSource(entry) {
   `;
 }
 
+/** Compiles existing extension/binding types without inventing a range-specific API. */
+function domRangeConsumerSource(root, entry) {
+  return `
+    import * as core from ${JSON.stringify(root)};
+    import { bindTranslator, intlDomExtension, type IntlDomExtensionOptions,
+      type TranslatorDomExtension, type TranslatorDomBinding } from ${JSON.stringify(entry)};
+    const options: IntlDomExtensionOptions = { attributePrefix: "venue-format" };
+    const extension: TranslatorDomExtension = intlDomExtension(options);
+    const translator = new core.Translator({ language: "en" });
+    const root = document.createDocumentFragment();
+    for (const kind of ["number", "currency", "date", "time", "weekday"]) {
+      const element = document.createElement("span");
+      element.setAttribute("data-venue-format-" + kind + "-range-start", "0");
+      element.setAttribute("data-venue-format-" + kind + "-range-end", "4");
+      root.append(element);
+    }
+    const binding: TranslatorDomBinding = bindTranslator(translator, root, {
+      extensions: [extension, intlDomExtension()], updateOnCatalogChange: true,
+    });
+    binding.update(root);
+    binding.dispose();
+    // @ts-expect-error DOM extensions are not exported from the DOM-free root.
+    core.intlDomExtension();
+    // @ts-expect-error DOM bindings are not exported from the DOM-free root.
+    core.bindTranslator(translator, root);
+    // @ts-expect-error Prefix configuration remains a string, not a marker map.
+    intlDomExtension({ attributePrefix: {} });
+    // @ts-expect-error Ranges use attributes, not new factory options.
+    intlDomExtension({ range: true });
+  `;
+}
+
 try {
   // Skip prepack here: this check itself runs inside the prepack validation gate.
   const packed = JSON.parse(
@@ -866,6 +1152,8 @@ try {
       `
       import assert from "node:assert/strict";
       import * as core from "@unilarva/translator";
+      import * as dom from "@unilarva/translator/dom";
+      import { Window } from ${JSON.stringify(import.meta.resolve("happy-dom"))};
       import { createTypedTranslate, Translator, formatRelativeTime, selectPlural } from "@unilarva/translator";
       import { bindTranslator, bindLanguageSelect, bindLanguageDetails } from "@unilarva/translator/dom";
       const translator = new Translator({ language: "en" });
@@ -878,6 +1166,7 @@ try {
           (${assertDateTimeRanges.toString()})(core, translator);
           (${assertDateTimeContract.toString()})(core, translator);
           (${assertWeekdayRanges.toString()})(core, translator);
+          (${assertDomRanges.toString()})(core, dom, Window);
       const catalogEvents = [];
       const unsubscribeCatalog = translator.subscribeCatalog(event => catalogEvents.push(event));
       translator.setTranslation("smoke", { en: "Installed package" });
@@ -1105,6 +1394,19 @@ try {
     skipLibCheck: false,
   };
   for (const [name, lib, source] of [
+    [
+      "dom-ranges-installed",
+      ["ES2023", "DOM", "DOM.Iterable"],
+      domRangeConsumerSource("@unilarva/translator", "@unilarva/translator/dom"),
+    ],
+    [
+      "dom-ranges-built",
+      ["ES2023", "DOM", "DOM.Iterable"],
+      domRangeConsumerSource(
+        fileURLToPath(new URL("../dist/index.js", import.meta.url)),
+        fileURLToPath(new URL("../dist/dom.js", import.meta.url)),
+      ),
+    ],
     ["temporal-installed", ["ES2023"], temporalConsumerSource("@unilarva/translator")],
     [
       "temporal-built",

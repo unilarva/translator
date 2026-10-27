@@ -233,7 +233,8 @@ prohibitions, including inherited/undefined fields and long/full styles. Test na
 for synthetic date/zone leakage before extending their contract; never silently filter parts or
 invent localized text. Range parts preserve fresh mutable ownership, order, literals and native
 source metadata. Equal ranges can have native string/parts whitespace differences. No result
-caching, DOM markers, relative-time ranges or plural-range selection is added.
+caching, relative-time ranges or plural-range selection is added. Declarative field-based ranges
+belong to the separate opt-in DOM adapter described below.
 
 `formatWeekdayRange()` and `formatWeekdayRangeToParts()` are root exports with matching Translator
 methods and the existing WeekdayFormatOptions. Validate both endpoints as integers Monday `0`
@@ -250,8 +251,8 @@ weekday labels, choose punctuation, filter parts, or disambiguate native narrow 
 byte-for-byte native strings for the prepared inputs/options and direct fresh mutable caller-owned
 `Intl.DateTimeRangeFormatPart[]` arrays/records, including literals, order and source metadata. Do not
 cache endpoints/results or assume joined parts reproduce native string whitespace. Core weekday
-ranges add no DOM markers; field-based DOM ranges and datetime DOM ranges remain separate planned
-work, with the existing five single-value formatting kinds unchanged.
+ranges stay DOM-free; the separate Intl DOM adapter exposes weekday strings, not parts.
+Datetime DOM ranges remain deferred.
 
 Check the requested native `formatToParts`, `formatRange`, or `formatRangeToParts` method only at
 call time, never during module import.
@@ -290,6 +291,31 @@ metadata by its raw attribute value, while still reacting to marker edits.
 
 Maps explicit formatting markers to core formatter calls and writes their results through
 `textContent`. It is opt-in so ordinary binding scans do not infer formatting behavior.
+
+The existing `intlDomExtension()` owns five single-value kinds and corresponding number/currency/
+calendar-date/clock-time/weekday range pairs. Build selectors from the configured prefix for both
+start and end attributes, including orphan ends. Before writing, require exactly one single kind or
+one complete nonempty pair; reject partial pairs, mixed families and single/range conflicts.
+Options alone are not targets. Delegate to matching Translator methods and retain the native string
+byte-for-byte, without separators, parts rendering, generated spans or HTML. Attribute values are
+not catalog keys or interpolation values. Failures preserve old content and remain isolated from
+valid siblings through the existing extension error boundary.
+
+Styles apply to singles and ranges. Calendar `date-style` accepts exact untrimmed, case-sensitive
+full/long/medium/short tokens and conflicts with `year` by presence, including empty attributes.
+Clock `time-style` accepts only short/medium and replaces component/seconds defaults. Without styles,
+preserve calendar numeric fields, clock pair-aware explicit-seconds defaults and weekday width.
+Calendar forbids time-style/time-zone; clock forbids date-style/time-zone; weekday forbids both
+styles/time-zone, all by presence even when empty. Number/currency must not read or validate any of
+these new temporal options. Preserve legacy fraction-marker validation across all kinds, applying
+fractions only to number/currency; other legacy kind-specific reads remain limited to their kind.
+The full marker/options inventory belongs in [USAGE.md](./USAGE.md#formatting-extension).
+
+Keep parsing at the DOM boundary: finite Number-compatible strings, strict calendar/clock fields and
+Monday-zero weekday indices delegate to the existing core contracts. No datetime markers, timestamp
+parsing or zone formatting are implemented here yet. Reuse the binding's initial/manual/language/
+enabled-catalog refresh, disposal, prefix ownership, script/style exclusions and template/fragment/
+shadow-root boundaries. Marker edits and inserted targets require an explicit update, not observation.
 
 ### `src/rich-text-dom.ts`
 
@@ -641,6 +667,15 @@ locale overrides, no state events, original error identity and failing loggers. 
 clean installed-consumer runtime/type fixtures must exercise both helpers and methods; remove each
 native range method independently before import and with warm caches to verify precise call-time
 diagnostics without disabling unrelated operations. Browser coverage is separate from Happy DOM.
+
+Intl DOM coverage must compare every field-based range and custom-prefix variant to its matching
+native string operation. Exercise complete/exclusive-kind validation, orphan ends, empty endpoints,
+style tokens and presence-based conflicts/prohibitions, numeric non-reading of temporal options and
+unchanged legacy option reads (including fraction validation across all kinds). Verify unchanged
+single defaults, style replacement of seconds defaults, old-content retention, valid siblings,
+initial/manual/language/catalog updates, explicit updates after marker edits, disposal and active-sink/
+template/fragment/shadow-root boundaries. Keep built and installed-consumer DOM coverage aligned;
+real-browser checks remain distinct from Happy DOM. Datetime DOM parsing is outside this contract.
 
 Tests that deliberately model hostile or malformed input are contract tests, not incidental edge
 cases. Preserve them when refactoring parsing or rendering.

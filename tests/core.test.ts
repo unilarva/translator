@@ -2469,11 +2469,36 @@ test("core types compile without ambient types and retain native abort/fetch com
     await writeFile(
       join(directory, "native.ts"),
       `${imports}
+      import * as core from ${JSON.stringify(index)};
+      import { bindTranslator, intlDomExtension, type IntlDomExtensionOptions,
+        type TranslatorDomExtension, type TranslatorDomBinding } from ${JSON.stringify(fileURLToPath(new URL("../src/dom.ts", import.meta.url)))};
       const signal: TranslationAbortSignal = new AbortController().signal;
       const nativeSignal: AbortSignal = signal;
       const nativeFetch: TranslatorFetch = fetch;
       new Translator({ fetch }).loadTranslationFiles([], { fetch, signal });
       const wrapper: TranslatorFetch = (input, init) => fetch(input, init);
+      const options: IntlDomExtensionOptions = { attributePrefix: "venue-format" };
+      const extension: TranslatorDomExtension = intlDomExtension(options);
+      const root = document.createDocumentFragment();
+      for (const kind of ["number", "currency", "date", "time", "weekday"]) {
+        const element = document.createElement("span");
+        element.setAttribute("data-venue-format-" + kind + "-range-start", "0");
+        element.setAttribute("data-venue-format-" + kind + "-range-end", "4");
+        root.append(element);
+      }
+      const binding: TranslatorDomBinding = bindTranslator(new Translator(), root, {
+        extensions: [extension, intlDomExtension()], updateOnCatalogChange: true,
+      });
+      binding.update(root);
+      binding.dispose();
+      // @ts-expect-error DOM extensions remain outside the DOM-free root entry.
+      core.intlDomExtension();
+      // @ts-expect-error DOM bindings remain outside the DOM-free root entry.
+      core.bindTranslator(new Translator(), root);
+      // @ts-expect-error Prefix configuration is a string, not a marker map.
+      intlDomExtension({ attributePrefix: {} });
+      // @ts-expect-error Ranges use HTML attributes, not a new extension option.
+      intlDomExtension({ range: true });
     `,
     );
     for (const [name, lib] of [

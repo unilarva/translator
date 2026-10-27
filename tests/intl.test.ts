@@ -3634,3 +3634,452 @@ test("Intl fraction markers accept only decimal integer digits from 0 through 20
     }
   }
 });
+
+test("Intl DOM ranges preserve native strings for every family, locale and prefix", () => {
+  const window = new Window();
+  for (const prefix of ["i18n", "preview-2"]) {
+    const extension = intlDomExtension({ attributePrefix: prefix });
+    const base = `data-${prefix}`;
+    for (const language of ["en-US", "fi-FI", "ja-JP", "ar-EG"]) {
+      const translator = new Translator({ language: "de" });
+      const context = { translator, log() {} };
+      for (const equal of [false, true]) {
+        const cases = [
+          {
+            kind: "number",
+            start: " 0xA ",
+            end: equal ? "10" : "12.5",
+            options: { "maximum-fraction-digits": "0" },
+            expected: new Intl.NumberFormat(language, { maximumFractionDigits: 0 }).formatRange(
+              10,
+              equal ? 10 : 12.5,
+            ),
+          },
+          {
+            kind: "currency",
+            start: "12",
+            end: equal ? "12" : "25",
+            options: { "currency-code": "EUR", "minimum-fraction-digits": "0" },
+            expected: new Intl.NumberFormat(language, {
+              style: "currency",
+              currency: "EUR",
+              minimumFractionDigits: 0,
+            }).formatRange(12, equal ? 12 : 25),
+          },
+          {
+            kind: "date",
+            start: "2026-09-30",
+            end: equal ? "2026-09-30" : "2026-10-02",
+            options: { year: "2-digit" },
+            expected: new Intl.DateTimeFormat(language, {
+              year: "2-digit",
+              month: "numeric",
+              day: "numeric",
+              timeZone: "UTC",
+            }).formatRange(
+              Date.UTC(2026, 8, 30),
+              equal ? Date.UTC(2026, 8, 30) : Date.UTC(2026, 9, 2),
+            ),
+          },
+          {
+            kind: "time",
+            start: "09:00",
+            end: equal ? "09:00:00" : "17:30:00",
+            options: {},
+            expected: new Intl.DateTimeFormat(language, {
+              hour: "numeric",
+              minute: "numeric",
+              second: "numeric",
+              timeZone: "UTC",
+            }).formatRange(
+              Date.UTC(1970, 0, 1, 9),
+              Date.UTC(1970, 0, 1, equal ? 9 : 17, equal ? 0 : 30),
+            ),
+          },
+          {
+            kind: "weekday",
+            start: "4",
+            end: equal ? "4" : "0",
+            options: { "weekday-width": "short" },
+            expected: new Intl.DateTimeFormat(language, {
+              weekday: "short",
+              timeZone: "UTC",
+            }).formatRange(
+              Date.UTC(1970, 0, 9),
+              equal ? Date.UTC(1970, 0, 9) : Date.UTC(1970, 0, 12),
+            ),
+          },
+        ];
+        for (const { kind, start, end, options, expected } of cases) {
+          const element = window.document.createElement("span");
+          element.innerHTML = "<b>old</b>";
+          element.setAttribute(`${base}-${kind}-range-start`, start);
+          element.setAttribute(`${base}-${kind}-range-end`, end);
+          element.setAttribute(`${base}-format-language`, language);
+          for (const [name, value] of Object.entries(options)) {
+            element.setAttribute(`${base}-${name}`, value);
+          }
+          const before = element
+            .getAttributeNames()
+            .map(name => [name, element.getAttribute(name)]);
+          assert.ok(element.matches(extension.selector));
+          extension.update(asElement(element), context);
+          assert.equal(element.textContent, expected, `${prefix}/${language}/${kind}/${equal}`);
+          assert.equal(element.children.length, 0);
+          assert.deepEqual(
+            element.getAttributeNames().map(name => [name, element.getAttribute(name)]),
+            before,
+          );
+          assert.equal(translator.getLanguage(), "de");
+        }
+      }
+    }
+  }
+});
+
+test("Intl DOM styles apply to singles and ranges, replacing only their family defaults", () => {
+  const window = new Window();
+  const translator = new Translator({ language: "en-GB" });
+  const extension = intlDomExtension();
+  for (const range of [false, true]) {
+    for (const dateStyle of ["full", "long", "medium", "short"] as const) {
+      const element = window.document.createElement("span");
+      element.setAttribute(`data-i18n-date${range ? "-range-start" : ""}`, "2026-09-30");
+      if (range) element.setAttribute("data-i18n-date-range-end", "2026-10-02");
+      element.setAttribute("data-i18n-date-style", dateStyle);
+      extension.update(asElement(element), { translator, log() {} });
+      const native = new Intl.DateTimeFormat("en-GB", { dateStyle, timeZone: "UTC" });
+      assert.equal(
+        element.textContent,
+        range
+          ? native.formatRange(Date.UTC(2026, 8, 30), Date.UTC(2026, 9, 2))
+          : native.format(Date.UTC(2026, 8, 30)),
+      );
+    }
+    for (const timeStyle of ["short", "medium"] as const) {
+      const element = window.document.createElement("span");
+      element.setAttribute(`data-i18n-time${range ? "-range-start" : ""}`, "09:00:15");
+      if (range) element.setAttribute("data-i18n-time-range-end", "17:00");
+      element.setAttribute("data-i18n-time-style", timeStyle);
+      extension.update(asElement(element), { translator, log() {} });
+      const native = new Intl.DateTimeFormat("en-GB", { timeStyle, timeZone: "UTC" });
+      assert.equal(
+        element.textContent,
+        range
+          ? native.formatRange(Date.UTC(1970, 0, 1, 9, 0, 15), Date.UTC(1970, 0, 1, 17))
+          : native.format(Date.UTC(1970, 0, 1, 9, 0, 15)),
+      );
+    }
+  }
+});
+
+test("Intl DOM invalid ranges and options retain text and isolate valid siblings and failing loggers", () => {
+  const window = new Window();
+  const translator = new Translator({
+    language: "en",
+    logger() {
+      throw new Error("core logger");
+    },
+  });
+  const extension = intlDomExtension();
+  const invalid: Record<string, string>[] = [];
+  const valid = {
+    number: ["1", "2"],
+    currency: ["1", "2"],
+    date: ["2026-09-30", "2026-10-02"],
+    time: ["09:00", "17:00"],
+    weekday: ["0", "4"],
+  };
+  for (const [kind, [start, end]] of Object.entries(valid)) {
+    const pair = {
+      [`${kind}-range-start`]: start!,
+      [`${kind}-range-end`]: end!,
+      ...(kind === "currency" ? { "currency-code": "EUR" } : {}),
+    };
+    invalid.push({ [`${kind}-range-start`]: start! }, { [`${kind}-range-end`]: end! });
+    for (const endpoint of ["start", "end"]) {
+      for (const value of ["", " ", "junk"])
+        invalid.push({ ...pair, [`${kind}-range-${endpoint}`]: value });
+    }
+    for (const single of Object.keys(valid)) invalid.push({ ...pair, [single]: "1" });
+    const other = kind === "number" ? "weekday" : "number";
+    invalid.push({ ...pair, [`${other}-range-end`]: "2" });
+    for (const raw of ["", " 2", "2.0", "2e0", "0x2", "+2", "21"]) {
+      invalid.push(
+        { ...pair, "minimum-fraction-digits": raw },
+        { ...pair, "maximum-fraction-digits": raw },
+      );
+    }
+    if (["date", "time", "weekday"].includes(kind)) {
+      for (const range of [true, false]) {
+        const target = range ? pair : { [kind]: start! };
+        const forbidden = [
+          "time-zone",
+          ...(kind !== "date" ? ["date-style"] : []),
+          ...(kind !== "time" ? ["time-style"] : []),
+        ];
+        for (const option of forbidden)
+          for (const value of ["", "UTC", "short"]) invalid.push({ ...target, [option]: value });
+        const style = kind === "date" ? "date-style" : "time-style";
+        if (kind !== "weekday")
+          for (const value of [
+            "",
+            " ",
+            "SHORT",
+            " short",
+            "short\n",
+            "invalid",
+            ...(kind === "time" ? ["full", "long"] : []),
+          ])
+            invalid.push({ ...target, [style]: value });
+        if (kind === "date")
+          for (const year of ["", "numeric", "2-digit"])
+            invalid.push({ ...target, year, "date-style": "short" });
+      }
+    }
+  }
+  invalid.push(
+    { "currency-range-start": "1", "currency-range-end": "2" },
+    { "currency-range-start": "1", "currency-range-end": "2", "currency-code": "EU" },
+    { "number-range-start": "Infinity", "number-range-end": "2" },
+    { "date-range-start": "2026-02-30", "date-range-end": "2026-03-02" },
+    { "date-range-start": "2026-10-02", "date-range-end": "2026-09-30" },
+    { "date-range-start": "2026-09-30T00:00:00Z", "date-range-end": "2026-10-02" },
+    { "time-range-start": "23:00", "time-range-end": "01:00" },
+    { "time-range-start": "24:00", "time-range-end": "25:00" },
+    { "weekday-range-start": "0", "weekday-range-end": "7" },
+    { "weekday-range-start": "-1", "weekday-range-end": "4" },
+  );
+  for (const attributes of invalid) {
+    const element = window.document.createElement("span");
+    element.textContent = "unchanged";
+    for (const [name, value] of Object.entries(attributes))
+      element.setAttribute(`data-i18n-${name}`, value);
+    assert.ok(element.matches(extension.selector));
+    assert.throws(
+      () => extension.update(asElement(element), { translator, log() {} }),
+      JSON.stringify(attributes),
+    );
+    assert.equal(element.textContent, "unchanged");
+    window.document.body.append(element);
+  }
+  const sibling = window.document.createElement("span");
+  sibling.setAttribute("data-i18n-number-range-start", "3");
+  sibling.setAttribute("data-i18n-number-range-end", "5");
+  window.document.body.append(sibling);
+  let failures = 0;
+  const binding = bindTranslator(translator, asParentNode(window.document.body), {
+    extensions: [extension],
+    logger(entry) {
+      if (entry.event === "dom-extension-failed") failures++;
+      throw new Error("DOM logger");
+    },
+  });
+  assert.equal(failures, invalid.length);
+  assert.equal(sibling.textContent, translator.formatNumberRange(3, 5));
+  for (const element of [...window.document.body.children].slice(0, -1))
+    assert.equal(element.textContent, "unchanged");
+  binding.dispose();
+});
+
+test("Intl DOM preserves legacy single option reads, defaults and numeric parsing", () => {
+  const window = new Window();
+  const translator = new Translator({ language: "en" });
+  const extension = intlDomExtension();
+  const cases = [
+    ["number", " 0x10 ", translator.formatNumber(16)],
+    ["currency", "1e2", translator.formatCurrency(100, { currency: "EUR" })],
+    ["date", "2026-09-30", translator.formatDate("2026-09-30")],
+    ["time", "09:05:00", translator.formatTime("09:05:00")],
+    ["weekday", "0x4", translator.formatWeekday(4)],
+  ];
+  for (const [kind, value, expected] of cases) {
+    const element = window.document.createElement("span");
+    element.setAttribute(`data-i18n-${kind}`, value!);
+    // These unrelated legacy options were always ignored rather than validated.
+    element.setAttribute("data-i18n-currency-code", kind === "currency" ? "EUR" : "invalid");
+    if (kind !== "date") element.setAttribute("data-i18n-year", "invalid");
+    if (kind !== "weekday") element.setAttribute("data-i18n-weekday-width", "invalid");
+    if (kind === "number" || kind === "currency")
+      for (const option of ["date-style", "time-style", "time-zone"])
+        element.setAttribute(`data-i18n-${option}`, "invalid");
+    const reads: string[] = [];
+    const original = element.getAttribute.bind(element);
+    element.getAttribute = name => {
+      reads.push(name);
+      return original(name);
+    };
+    extension.update(asElement(element), { translator, log() {} });
+    assert.equal(element.textContent, expected);
+    const legacyReads = reads.filter(
+      name => !["data-i18n-date-style", "data-i18n-time-style"].includes(name),
+    );
+    assert.deepEqual(legacyReads, [
+      "data-i18n-format-language",
+      "data-i18n-minimum-fraction-digits",
+      "data-i18n-maximum-fraction-digits",
+      ...(kind === "currency"
+        ? ["data-i18n-currency-code"]
+        : kind === "date"
+          ? ["data-i18n-year"]
+          : kind === "weekday"
+            ? ["data-i18n-weekday-width"]
+            : []),
+      `data-i18n-${kind}`,
+    ]);
+    if (kind === "number" || kind === "currency")
+      assert.ok(!reads.some(name => /style|zone/.test(name)));
+  }
+  const optionOnly = window.document.createElement("span");
+  for (const option of [
+    "date-style",
+    "time-style",
+    "time-zone",
+    "currency-code",
+    "year",
+    "weekday-width",
+    "format-language",
+    "minimum-fraction-digits",
+  ])
+    optionOnly.setAttribute(`data-i18n-${option}`, "invalid");
+  assert.equal(optionOnly.matches(extension.selector), false);
+});
+
+test("Intl DOM delegates numeric ordering and unavailable native ranges without changing text", t => {
+  const window = new Window();
+  const translator = new Translator({ language: "en" });
+  const extension = intlDomExtension();
+  for (const kind of ["number", "currency"]) {
+    const native = new Intl.NumberFormat(
+      "en",
+      kind === "currency"
+        ? { style: "currency", currency: "EUR", maximumFractionDigits: 0 }
+        : { maximumFractionDigits: 0 },
+    );
+    for (const [start, end] of [
+      [2, 1],
+      [-0, 0],
+      [1.1, 1.2],
+    ]) {
+      const element = window.document.createElement("span");
+      element.setAttribute(
+        `data-i18n-${kind}-range-start`,
+        Object.is(start, -0) ? "-0" : String(start),
+      );
+      element.setAttribute(`data-i18n-${kind}-range-end`, String(end));
+      element.setAttribute("data-i18n-currency-code", "EUR");
+      element.setAttribute("data-i18n-maximum-fraction-digits", "0");
+      let expected: string;
+      try {
+        expected = native.formatRange(start!, end!);
+      } catch (error) {
+        assert.throws(() => extension.update(asElement(element), { translator, log() {} }), {
+          constructor: (error as Error).constructor,
+        });
+        continue;
+      }
+      extension.update(asElement(element), { translator, log() {} });
+      assert.equal(element.textContent, expected);
+    }
+  }
+  const prototype = Intl.NumberFormat.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, "formatRange")!;
+  t.after(() => Object.defineProperty(prototype, "formatRange", descriptor));
+  Object.defineProperty(prototype, "formatRange", { ...descriptor, value: undefined });
+  window.document.body.innerHTML = `<span data-i18n-number-range-start="1" data-i18n-number-range-end="2">old</span><span data-i18n-number="3">single</span>`;
+  const errors: unknown[] = [];
+  const binding = bindTranslator(translator, asParentNode(window.document.body), {
+    extensions: [extension],
+    logger(entry) {
+      errors.push(entry.error);
+      throw new Error("logger");
+    },
+  });
+  assert.equal(window.document.body.firstElementChild!.textContent, "old");
+  assert.equal(window.document.body.lastElementChild!.textContent, translator.formatNumber(3));
+  assert.equal(errors.length, 1);
+  assert.match((errors[0] as Error).message, /Intl.NumberFormat.prototype.formatRange/);
+  binding.dispose();
+});
+
+test("Intl DOM ranges share refresh, explicit update, fragment, shadow and disposal boundaries", () => {
+  const window = new Window();
+  const translator = new Translator({ language: "en" });
+  window.document.body.innerHTML = `
+    <section id="scope" data-i18n-weekday-range-start="0" data-i18n-weekday-range-end="4"></section>
+    <aside data-i18n-number-range-start="1" data-i18n-number-range-end="2">outside</aside>`;
+  const scope = window.document.querySelector("#scope")!;
+  const binding = bindTranslator(translator, asParentNode(scope), {
+    extensions: [intlDomExtension()],
+  });
+  assert.equal(scope.textContent, translator.formatWeekdayRange(0, 4));
+  assert.equal(window.document.querySelector("aside")!.textContent, "outside");
+  scope.setAttribute("data-i18n-weekday-range-end", "0");
+  assert.equal(scope.textContent, translator.formatWeekdayRange(0, 4));
+  binding.updateElement(asElement(scope));
+  assert.equal(scope.textContent, translator.formatWeekdayRange(0, 0));
+  translator.setLanguage("fi");
+  assert.equal(scope.textContent, translator.formatWeekdayRange(0, 0));
+  scope.textContent = "catalog pending";
+  translator.setTranslation("unrelated", { fi: "value" });
+  assert.equal(scope.textContent, translator.formatWeekdayRange(0, 0));
+  binding.setValues(asElement(scope), { start: 6 });
+  assert.equal(scope.textContent, translator.formatWeekdayRange(0, 0));
+
+  // Remove the scope's content marker before adding children that must remain scoped.
+  scope.removeAttribute("data-i18n-weekday-range-start");
+  scope.removeAttribute("data-i18n-weekday-range-end");
+  scope.innerHTML = `<span id="new" data-i18n-time-range-start="09:00" data-i18n-time-range-end="17:00">new</span>
+    <script data-i18n-number-range-start="1" data-i18n-number-range-end="2">script</script>
+    <style data-i18n-number-range-start="1" data-i18n-number-range-end="2">style</style>
+    <template data-i18n-number-range-start="1" data-i18n-number-range-end="2"><span data-i18n-number-range-start="1" data-i18n-number-range-end="2">template</span></template>
+    <div id="host"></div>`;
+  const added = scope.querySelector("#new")!;
+  assert.equal(added.textContent, "new");
+  const shadow = scope.querySelector("#host")!.attachShadow({ mode: "open" });
+  shadow.innerHTML = `<span data-i18n-currency-range-start="1" data-i18n-currency-range-end="2" data-i18n-currency-code="EUR">shadow</span>`;
+  binding.update();
+  assert.equal(added.textContent, translator.formatTimeRange("09:00", "17:00"));
+  for (const tag of ["script", "style"]) {
+    const element = scope.querySelector(tag)!;
+    binding.updateElement(asElement(element));
+    assert.equal(element.textContent, tag);
+  }
+  const template = scope.querySelector("template")!;
+  binding.updateElement(asElement(template));
+  assert.equal(template.content.firstElementChild!.textContent, "template");
+  assert.equal(shadow.firstElementChild!.textContent, "shadow");
+  binding.update(asParentNode(shadow));
+  assert.equal(
+    shadow.firstElementChild!.textContent,
+    translator.formatCurrencyRange(1, 2, { currency: "EUR" }),
+  );
+  const fragment = template.content.cloneNode(true);
+  binding.update(asParentNode(fragment));
+  assert.equal(fragment.firstChild!.textContent, translator.formatNumberRange(1, 2));
+  assert.equal(template.content.firstElementChild!.textContent, "template");
+  binding.update(asParentNode(template.content));
+  assert.equal(template.content.firstElementChild!.textContent, translator.formatNumberRange(1, 2));
+  const before = added.textContent;
+  binding.dispose();
+  binding.dispose();
+  added.setAttribute("data-i18n-time-range-end", "18:00");
+  translator.setLanguage("ja");
+  translator.setTranslation("after", { ja: "value" });
+  binding.update();
+  binding.updateElement(asElement(added));
+  binding.setValues(asElement(added), {});
+  binding.clearValues(asElement(added));
+  assert.equal(added.textContent, before);
+
+  const manual = bindTranslator(translator, asParentNode(added), {
+    extensions: [intlDomExtension()],
+    updateOnCatalogChange: false,
+  });
+  added.textContent = "manual";
+  translator.setTranslation("manual", { ja: "value" });
+  assert.equal(added.textContent, "manual");
+  manual.update();
+  assert.equal(added.textContent, translator.formatTimeRange("09:00", "18:00"));
+  manual.dispose();
+});

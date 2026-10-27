@@ -3,20 +3,22 @@
 ## Unreleased
 
 - **Breaking:** Restrict all four `formatDate*` APIs to calendar strings/records and date-only options;
-  Date inputs and clock/zone options are rejected. Move instants to the four new `formatDateTime*`
-  APIs with required explicit `timeZone` options and medium-date/short-time defaults unless styles
-  or display components are defined. Weekday APIs also reject zone options. See the usage guide
-  for migration; no compatibility overloads are retained.
+  Date inputs and clock/zone options are rejected. Move instants to the four `formatDateTime*` APIs
+  with required explicit `timeZone` options. Defaults are medium date plus short time unless styles
+  or display components are defined. Weekdays also reject zone options. See the usage guide's
+  temporal migration; no mixed-input compatibility overloads are retained.
 - Add native structured parts for numbers, currencies, relative times, calendars, datetimes, clocks,
   and weekdays, plus number/currency/calendar/datetime/clock/weekday ranges, through helpers and
   Translator methods. Parts are fresh and caller-owned with native range source metadata. Clock
   ranges use same-day ordering and pair-aware seconds; recurring contiguous weekday spans wrap
   forward through Sunday, with equal endpoints meaning one weekday. Unsupported native operations
   fail only when called, without affecting imports or unrelated formatting.
-- Extend opt-in `intlDomExtension()` with text-only number, currency, calendar, clock, and weekday
-  range pairs and calendar/clock styles for singles and ranges. Preserve custom prefixes, native
-  strings and binding refreshes; reject incomplete/conflicting markers and incompatible temporal
-  options before writing. Datetime markers and parts rendering are not included.
+- Extend opt-in `intlDomExtension()` with text-only number, currency, calendar, clock, weekday and
+  datetime range pairs and temporal styles, all supporting custom prefixes. Datetime pairs privately
+  parse strict offset-bearing timestamps, require an explicit output zone and always supply both
+  date/time styles (independent medium/short defaults, unlike core projections). Invalid markers and
+  options preserve old content and valid siblings; native strings and binding refreshes are retained.
+  No public parser, single-datetime marker or parts rendering is added.
 - Require TypeScript `ES2023` libraries, or `ES2022` plus `ES2023.Intl`, instead of ES2022 alone.
   Root declarations remain DOM-free; the JavaScript target stays ES2022 and the Node minimum stays
   `22.13.0`.

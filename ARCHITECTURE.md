@@ -35,6 +35,7 @@ This document is for package maintainers. Consumer setup and behavior belong in
   - [Semantic Rich Text](#semantic-rich-text)
 - [Failure And Logging Policy](#failure-and-logging-policy)
 - [Testing Strategy](#testing-strategy)
+  - [Temporal Qualification](#temporal-qualification)
 - [Development](#development)
 - [Adding Or Changing Features](#adding-or-changing-features)
 - [Future Enhancements](#future-enhancements)
@@ -252,7 +253,7 @@ byte-for-byte native strings for the prepared inputs/options and direct fresh mu
 `Intl.DateTimeRangeFormatPart[]` arrays/records, including literals, order and source metadata. Do not
 cache endpoints/results or assume joined parts reproduce native string whitespace. Core weekday
 ranges stay DOM-free; the separate Intl DOM adapter exposes weekday strings, not parts.
-Datetime DOM ranges remain deferred.
+The separate Intl DOM adapter also exposes explicitly zoned datetime range strings.
 
 Check the requested native `formatToParts`, `formatRange`, or `formatRangeToParts` method only at
 call time, never during module import.
@@ -293,7 +294,8 @@ Maps explicit formatting markers to core formatter calls and writes their result
 `textContent`. It is opt-in so ordinary binding scans do not infer formatting behavior.
 
 The existing `intlDomExtension()` owns five single-value kinds and corresponding number/currency/
-calendar-date/clock-time/weekday range pairs. Build selectors from the configured prefix for both
+calendar-date/clock-time/weekday range pairs, plus datetime endpoint pairs with required time-zone.
+There is no single-datetime marker. Build selectors from the configured prefix for both
 start and end attributes, including orphan ends. Before writing, require exactly one single kind or
 one complete nonempty pair; reject partial pairs, mixed families and single/range conflicts.
 Options alone are not targets. Delegate to matching Translator methods and retain the native string
@@ -308,12 +310,24 @@ preserve calendar numeric fields, clock pair-aware explicit-seconds defaults and
 Calendar forbids time-style/time-zone; clock forbids date-style/time-zone; weekday forbids both
 styles/time-zone, all by presence even when empty. Number/currency must not read or validate any of
 these new temporal options. Preserve legacy fraction-marker validation across all kinds, applying
-fractions only to number/currency; other legacy kind-specific reads remain limited to their kind.
+fractions only to number/currency; other legacy kind-specific reads remain limited to their kind,
+except `year` is forbidden by presence on datetime, even empty. Datetime always supplies medium date
+plus short time, with each style independently replaced by exact full/long/medium/short tokens.
+Unlike core one-style projections, one supplied DOM style retains the other default.
 The full marker/options inventory belongs in [USAGE.md](./USAGE.md#formatting-extension).
 
 Keep parsing at the DOM boundary: finite Number-compatible strings, strict calendar/clock fields and
-Monday-zero weekday indices delegate to the existing core contracts. No datetime markers, timestamp
-parsing or zone formatting are implemented here yet. Reuse the binding's initial/manual/language/
+Monday-zero weekday indices delegate to the existing core contracts. The private datetime parser
+implements the exact [USAGE grammar](./USAGE.md#datetime-dom-ranges), not permissive Date parsing.
+Validate Gregorian wall fields before subtracting the signed numeric offset; UTC setters avoid
+years 0-99 constructor remapping. Pad accepted fractions to milliseconds without rounding or
+truncation. Converted instants may cross the wall-input year bounds. Delegate resulting Dates to
+`formatDateTimeRange()` for ordering, equality and native output. Do not export this parser or
+broaden core datetime/calendar/clock inputs.
+Require a primitive nonblank explicit output-zone string supported by Intl, without DOM trimming or
+normalization; never infer it from host, locale or endpoint offsets. Named IANA zones support
+seasonal rules. Local-field-to-instant resolution and schedule rules remain application-owned.
+Reuse the binding's initial/manual/language/
 enabled-catalog refresh, disposal, prefix ownership, script/style exclusions and template/fragment/
 shadow-root boundaries. Marker edits and inserted targets require an explicit update, not observation.
 
@@ -668,20 +682,70 @@ clean installed-consumer runtime/type fixtures must exercise both helpers and me
 native range method independently before import and with warm caches to verify precise call-time
 diagnostics without disabling unrelated operations. Browser coverage is separate from Happy DOM.
 
-Intl DOM coverage must compare every field-based range and custom-prefix variant to its matching
+Intl DOM coverage must compare every range and custom-prefix variant to its matching
 native string operation. Exercise complete/exclusive-kind validation, orphan ends, empty endpoints,
 style tokens and presence-based conflicts/prohibitions, numeric non-reading of temporal options and
 unchanged legacy option reads (including fraction validation across all kinds). Verify unchanged
 single defaults, style replacement of seconds defaults, old-content retention, valid siblings,
 initial/manual/language/catalog updates, explicit updates after marker edits, disposal and active-sink/
 template/fragment/shadow-root boundaries. Keep built and installed-consumer DOM coverage aligned;
-real-browser checks remain distinct from Happy DOM. Datetime DOM parsing is outside this contract.
+real-browser checks remain distinct from Happy DOM. Datetime coverage must exercise strict grammar,
+Gregorian/leap validation, precision/padded milliseconds, offset limits and signed zero, converted
+year boundaries, different-offset ordering/equality, DST/output zones, required zones without fallback,
+independent style defaults and year-presence rejection. Verify explicit-zone output across host zones,
+source-attribute immutability and no partial writes on failure.
 
 Tests that deliberately model hostile or malformed input are contract tests, not incidental edge
 cases. Preserve them when refactoring parsing or rendering.
 
 The test project skips dependency-library checking only at the Happy DOM boundary. Source
 declaration checking remains strict. Do not broaden that exception into the build configuration.
+
+### Temporal Qualification
+
+Final local qualification on **2026-10-27** covers the Unreleased temporal split and all six DOM
+range families. It is not a publication record or proof of consumer adoption.
+
+- Complete `npm run validate` passed on verified Node **22.13.0** and **24.22.1**, each with npm
+  **11.15.0** selected for nested commands: formatting, source/test types, **236 tests, no skips**,
+  clean ESM/declaration build, built runtime, exact-tarball clean install/runtime and strict consumers.
+- Root source/built/installed declarations compile with `types: []` under both `ES2023` and
+  `ES2022` plus `ES2023.Intl`, without DOM/Node ambient types or shims; `/dom` consumers use DOM
+  libraries. Installed consumer checks retain `skipLibCheck: false`. Root DOM isolation, zero
+  runtime dependencies, old-call rejection and operation-specific capability checks remain gated.
+- Source/built/installed runtime coverage includes strict inputs/options, Date detachment and read
+  ordering, native ownership/source metadata, native errors/logger isolation, caches/coercion,
+  calendar/clock prohibitions, weekday wrap/equality and strict DOM grammar/styles/zones/lifecycle.
+  Built/installed datetime DOM output also matches across UTC, Los Angeles and Tokyo host zones.
+
+Representative desktop browser smoke passed on **Chromium 149.0.7827.55**, **Firefox 151.0**, and
+**WebKit 26.5**, sequentially in Playwright **1.61.1**'s Noble Docker image with network disabled,
+read-only inputs, in-memory bundles and no capture/download artifacts:
+
+| Selection                                                                           | Per Engine                      | Entry Under Test                          |
+| ----------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------- |
+| Field DOM strings/options, invalid isolation, refreshes/disposal and DOM boundaries | 3,884 cases / 19,312 assertions | Public source root and `/dom`             |
+| Datetime DOM grammar/offsets/leaps/year/DST, styles/zones, isolation and lifecycle  | 1,576 cases / 8,304 assertions  | Public source root and `/dom`             |
+| Weekday native/public string/parts oracle                                           | 1,617 cases per host zone       | Built root bundled for browser            |
+| Datetime four-operation native oracle                                               | 240 cases per host zone         | Built root bundled for browser            |
+| Independent method removal before import and on warm caches                         | 14 scenarios / 636 assertions   | Built root and `/dom` bundled for browser |
+
+Both DOM matrices and the built temporal oracles ran in Los Angeles and Tokyo emulated host zones,
+with identical outputs for identical explicit zones/field inputs and zero failures/page errors.
+Weekdays cover every pair, all widths and 11 locales (en-US/en-GB/fi-FI/pt-BR/ja-JP/ar-EG/zh-CN/th-TH/
+fa-IR/he-IL/hi-IN), with only weekday/literal native parts, including equal/wrapped pairs. Datetime
+oracles cover five locales, three output zones, spring/fall DST, year/equal pairs and four projections.
+Capability scenarios independently remove DateTimeFormat `format`, `formatToParts`, `formatRange`,
+`formatRangeToParts`, and NumberFormat's three parts/range methods. Errors name the requested method
+and remedy; unrelated operations/imports and ordinary siblings survive. All six DOM ranges fail only
+when their corresponding native string-range operation is missing, not when parts methods are absent.
+
+Coverage limits: these are bundled source/built-entry desktop checks, **not clean-installed-package
+browser loading**, the complete Node suite in browsers, shipping Safari, minimum-browser qualification,
+mobile presets/physical devices or exhaustive locale/ICU/tzdata coverage. Node tarball runtime and
+Happy DOM checks do not fill those gaps. These browser probes are manual qualification, not a package
+browser CI gate. Future qualification must separately identify its tested entry, engine and host data;
+do not infer support from declarations or sanitize native weekday output to hide leakage.
 
 ## Development
 

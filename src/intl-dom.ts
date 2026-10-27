@@ -35,6 +35,62 @@ function parseNumber(value: string, label: string): number {
   return number;
 }
 
+/** Validates timestamp wall fields before converting an explicit offset into an instant. */
+function parseDateTime(value: string, label: string): Date {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|([+-])(\d{2}):(\d{2}))$/.exec(
+      value,
+    );
+  if (!match || value.trim() !== value) {
+    throw new RangeError(`${label} must be a strict offset-bearing datetime timestamp`);
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6] ?? 0);
+  const millisecond = Number((match[7] ?? "").padEnd(3, "0"));
+  const offsetHour = Number(match[10] ?? 0);
+  const offsetMinute = Number(match[11] ?? 0);
+  if (
+    year < 1 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59
+  ) {
+    throw new RangeError(`${label} contains invalid datetime fields`);
+  }
+  // Avoid Date.UTC's special handling of years 0-99. Check the Gregorian wall date
+  // before applying the offset, which can legitimately change its day or year.
+  const wall = new Date(0);
+  wall.setUTCFullYear(year, month - 1, day);
+  wall.setUTCHours(hour, minute, second, millisecond);
+  if (
+    wall.getUTCFullYear() !== year ||
+    wall.getUTCMonth() !== month - 1 ||
+    wall.getUTCDate() !== day
+  ) {
+    throw new RangeError(`${label} must contain a valid Gregorian date`);
+  }
+  const offset = (offsetHour * 60 + offsetMinute) * (match[9] === "-" ? -1 : 1);
+  return new Date(wall.getTime() - offset * 60_000);
+}
+
+/** Validates one exact datetime style token without trimming or case conversion. */
+function dateTimeStyle(value: string, attribute: string): "full" | "long" | "medium" | "short" {
+  if (value !== "full" && value !== "long" && value !== "medium" && value !== "short") {
+    throw new Error(`${attribute} must be 'full', 'long', 'medium', or 'short'`);
+  }
+  return value;
+}
+
 /** Reads an optional strict decimal fraction limit (0-20), throwing RangeError when malformed. */
 function fractionDigits(element: Element, attribute: string): number | undefined {
   const raw = element.getAttribute(attribute);
@@ -54,7 +110,7 @@ function fractionDigits(element: Element, attribute: string): number | undefined
 }
 
 /**
- * Creates a text-only DOM extension for number, currency, date, time, and weekday values/ranges.
+ * Creates a text-only DOM extension for number/currency/field values and datetime ranges.
  * Register the returned extension in `bindTranslator` options to opt in to its
  * synchronous update/disposal lifecycle. All rendered output replaces textContent,
  * never interpreting it as HTML; the binding excludes template and script/style targets.
@@ -65,6 +121,16 @@ function fractionDigits(element: Element, attribute: string): number | undefined
  * `data-i18n-{kind}-range-start` and `data-i18n-{kind}-range-end`. Both endpoints
  * must be nonempty; orphan ends and mixed kinds fail without replacing text.
  * Ranges use one native localized string, without custom separators or parts rendering.
+ * Datetime has range endpoints only, not a single-value marker. Endpoints require exact
+ * uppercase `YYYY-MM-DDTHH:MM[:SS[.fff]]` followed by `Z` or `+/-HH:MM`, without
+ * whitespace. Gregorian wall years are 0001-9999; hours are 00-23, minutes/seconds
+ * 00-59, with no normalized dates, 24:00 or leap seconds. Fractions require seconds
+ * and 1-3 digits, right-padded to milliseconds. Offsets run through 23:59; both signed
+ * zero offsets mean UTC. Conversion may cross the wall year bounds. The required
+ * `-time-zone` supplies the explicit Intl output zone, never inferred from offsets,
+ * locale or host. Datetime styles accept full/long/medium/short: medium date plus short
+ * time are always supplied, each independently overridden by its corresponding style.
+ * Legacy `-year` is forbidden by presence on datetime ranges, even when empty.
  * Number and currency values accept
  * non-blank finite Number-compatible strings. Currency requires `-currency-code`
  * with a three-letter ISO 4217 code. Dates require valid strict `YYYY-MM-DD`
@@ -110,6 +176,7 @@ export function intlDomExtension(options: IntlDomExtensionOptions = {}): Transla
     currency: `${base}-currency`,
     currencyCode: `${base}-currency-code`,
     date: `${base}-date`,
+    datetime: `${base}-datetime`,
     time: `${base}-time`,
     weekday: `${base}-weekday`,
     weekdayWidth: `${base}-weekday-width`,
@@ -128,7 +195,8 @@ export function intlDomExtension(options: IntlDomExtensionOptions = {}): Transla
     markers.time,
     markers.weekday,
   ];
-  const rangeMarkers = valueMarkers.map(attribute => ({
+  const rangeMarkers = [...valueMarkers, markers.datetime].map(attribute => ({
+    kind: attribute,
     start: `${attribute}-range-start`,
     end: `${attribute}-range-end`,
   }));
@@ -153,7 +221,7 @@ export function intlDomExtension(options: IntlDomExtensionOptions = {}): Transla
       if (range && (start === null || end === null || !start.trim() || !end.trim())) {
         throw new Error(`${range.start} and ${range.end} must both contain nonempty endpoints`);
       }
-      const kind = range ? valueMarkers[rangeMarkers.indexOf(range)]! : present[0]!;
+      const kind = range?.kind ?? present[0]!;
       const language = element.getAttribute(markers.language) ?? undefined;
       const minimumFractionDigits = fractionDigits(element, markers.minimumFractionDigits);
       const maximumFractionDigits = fractionDigits(element, markers.maximumFractionDigits);
@@ -174,6 +242,29 @@ export function intlDomExtension(options: IntlDomExtensionOptions = {}): Transla
         element.textContent = range
           ? translator.formatCurrencyRange(value, parseNumber(end!, range.end), options)
           : translator.formatCurrency(value, options);
+        return;
+      }
+      if (kind === markers.datetime) {
+        if (element.hasAttribute(markers.year)) {
+          throw new Error(`${markers.year} is not supported for datetime ranges`);
+        }
+        const timeZone = element.getAttribute(markers.timeZone);
+        if (timeZone === null || !timeZone.trim()) {
+          throw new Error(`${markers.timeZone} is required for datetime ranges`);
+        }
+        const dateStyle = dateTimeStyle(
+          element.getAttribute(markers.dateStyle) ?? "medium",
+          markers.dateStyle,
+        );
+        const timeStyle = dateTimeStyle(
+          element.getAttribute(markers.timeStyle) ?? "short",
+          markers.timeStyle,
+        );
+        element.textContent = translator.formatDateTimeRange(
+          parseDateTime(start!, startAttribute),
+          parseDateTime(end!, range!.end),
+          { language, timeZone, dateStyle, timeStyle },
+        );
         return;
       }
       const forbidden: string[] = [markers.timeZone];

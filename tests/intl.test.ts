@@ -4083,3 +4083,359 @@ test("Intl DOM ranges share refresh, explicit update, fragment, shadow and dispo
   assert.equal(added.textContent, translator.formatTimeRange("09:00", "18:00"));
   manual.dispose();
 });
+
+test("datetime DOM ranges preserve native styles, explicit zones and validated offset instants", () => {
+  const window = new Window();
+  const pairs = [
+    ["2026-09-30T23:30Z", "2026-10-01T03:30+03:00"],
+    ["2026-12-31T23:30:00-02:00", "2027-01-01T04:00:00Z"],
+    ["2024-02-29T23:59:59.1+23:59", "2024-03-01T00:00:00.123-23:59"],
+    ["2000-02-29T09:00:00.12Z", "2000-02-29T09:00:00.120+00:00"],
+    ["2026-10-25T03:30:00+03:00", "2026-10-25T03:30:00+02:00"],
+    ["2026-03-29T02:30:00+02:00", "2026-03-29T04:30:00+03:00"],
+    ["2026-01-02T00:00+23:59", "2026-01-01T23:59-23:59"],
+    ["0001-01-01T00:00+23:59", "0001-01-01T00:00Z"],
+    ["0099-12-31T23:59:59.999Z", "0100-01-01T00:00Z"],
+    ["9999-12-31T23:59Z", "9999-12-31T23:59-23:59"],
+    ["2026-09-30T09:00-00:00", "2026-09-30T09:00+00:00"],
+  ];
+  const styles = [undefined, "full", "long", "medium", "short"] as const;
+  for (const prefix of ["i18n", "venue-2"]) {
+    const extension = intlDomExtension({ attributePrefix: prefix });
+    const base = `data-${prefix}`;
+    for (const language of ["en-GB", "fi-FI", "ja-JP", "ar-EG"]) {
+      const translator = new Translator({ language: "de" });
+      for (const timeZone of ["UTC", "Europe/Helsinki", "America/New_York"]) {
+        for (const dateStyle of styles) {
+          for (const timeStyle of styles) {
+            const native = new Intl.DateTimeFormat(language, {
+              dateStyle: dateStyle ?? "medium",
+              timeStyle: timeStyle ?? "short",
+              timeZone,
+            });
+            for (const [start, end] of pairs) {
+              const element = window.document.createElement("span");
+              element.innerHTML = "<b>old</b>";
+              element.setAttribute(`${base}-datetime-range-start`, start!);
+              element.setAttribute(`${base}-datetime-range-end`, end!);
+              element.setAttribute(`${base}-time-zone`, timeZone);
+              element.setAttribute(`${base}-format-language`, language);
+              // Unrelated legacy options retain their ignored/not-read behavior.
+              element.setAttribute(`${base}-weekday-width`, "invalid");
+              element.setAttribute(`${base}-currency-code`, "invalid");
+              if (dateStyle) element.setAttribute(`${base}-date-style`, dateStyle);
+              if (timeStyle) element.setAttribute(`${base}-time-style`, timeStyle);
+              const before = element
+                .getAttributeNames()
+                .map(name => [name, element.getAttribute(name)]);
+              assert.ok(element.matches(extension.selector));
+              extension.update(asElement(element), { translator, log() {} });
+              assert.equal(
+                element.textContent,
+                native.formatRange(new Date(start!), new Date(end!)),
+              );
+              assert.equal(element.children.length, 0);
+              assert.deepEqual(
+                element.getAttributeNames().map(name => [name, element.getAttribute(name)]),
+                before,
+              );
+              assert.equal(translator.getLanguage(), "de");
+            }
+          }
+        }
+      }
+    }
+  }
+});
+
+test("datetime DOM parsing delegates Dates with exact precision and never uses permissive string parsing", t => {
+  const window = new Window();
+  const translator = new Translator({ language: "en" });
+  const extension = intlDomExtension();
+  const element = window.document.createElement("span");
+  element.setAttribute("data-i18n-time-zone", "UTC");
+  const pairs = [
+    ["2026-01-01T01:02+01:00", "2026-01-01T00:02:00.000Z"],
+    ["2026-01-01T01:02:03.0+01:00", "2026-01-01T00:02:03.000Z"],
+    ["2026-01-01T01:02:03.1+01:00", "2026-01-01T00:02:03.100Z"],
+    ["2026-01-01T01:02:03.12+01:00", "2026-01-01T00:02:03.120Z"],
+    ["2026-01-01T01:02:03.123+01:00", "2026-01-01T00:02:03.123Z"],
+    ["0001-01-01T00:00+23:59", "0000-12-31T00:01:00.000Z"],
+    ["9999-12-31T23:59-23:59", "+010000-01-01T23:58:00.000Z"],
+  ];
+  let expected = "";
+  t.mock.method(
+    translator,
+    "formatDateTimeRange",
+    (start: Date, end: Date, options: DateTimeFormatOptions) => {
+      assert.ok(start instanceof Date);
+      assert.ok(end instanceof Date);
+      assert.notEqual(start, end);
+      assert.equal(start.toISOString(), expected);
+      assert.equal(end.toISOString(), expected);
+      assert.deepEqual(options, {
+        language: undefined,
+        timeZone: "UTC",
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+      return "<b>native range</b>";
+    },
+  );
+  const parse = Date.parse;
+  t.mock.method(Date, "parse", () => {
+    throw new Error("must not parse strings");
+  });
+  for (const [input, iso] of pairs) {
+    expected = iso!;
+    element.setAttribute("data-i18n-datetime-range-start", input!);
+    element.setAttribute("data-i18n-datetime-range-end", input!);
+    extension.update(asElement(element), { translator, log() {} });
+    assert.equal(element.textContent, "<b>native range</b>");
+    assert.equal(element.children.length, 0);
+  }
+  assert.notEqual(Date.parse, parse);
+});
+
+test("datetime DOM rejects malformed timestamps, conflicting kinds, zones and styles atomically", () => {
+  const window = new Window();
+  const translator = new Translator({
+    language: "en",
+    logger() {
+      throw new Error("core logger");
+    },
+  });
+  const extension = intlDomExtension();
+  const pair = {
+    "datetime-range-start": "2026-01-01T09:00Z",
+    "datetime-range-end": "2026-01-01T10:00Z",
+    "time-zone": "Europe/Helsinki",
+  };
+  const invalid: Record<string, string>[] = [];
+  for (const input of [
+    "",
+    " ",
+    "2026-01-01",
+    "2026-01-01T09:00",
+    "2026-01-01t09:00Z",
+    "2026-01-01T09:00z",
+    "2026-01-01 09:00Z",
+    "2026-1-01T09:00Z",
+    "2026-01-1T09:00Z",
+    "2026-01-01T9:00Z",
+    "2026-01-01T09:0Z",
+    "2026-01-01T09:00:0Z",
+    "2026-01-01T09:00.1Z",
+    "2026-01-01T09:00:00.Z",
+    "2026-01-01T09:00:00.1234Z",
+    "2026-01-01T09:00:00,1Z",
+    "2026-01-01T09:00Zjunk",
+    " 2026-01-01T09:00Z",
+    "2026-01-01T09:00Z ",
+    "2026-01-01T09:00Z\n",
+    "2026-01-01T09:00Z\r\n",
+    "2026-01-01T24:00Z",
+    "2026-01-01T09:60Z",
+    "2026-01-01T09:00:60Z",
+    "2026-01-01T09:00+24:00",
+    "2026-01-01T09:00-24:00",
+    "2026-01-01T09:00+00:60",
+    "2026-01-01T09:00-00:60",
+    "2026-01-01T09:00+1:00",
+    "2026-01-01T09:00+0100",
+    "2026-01-01T09:00+01",
+    "2026-01-01T09:00+01:00:00",
+    "2026-02-29T09:00Z",
+    "1900-02-29T09:00Z",
+    "2100-02-29T09:00Z",
+    "2026-04-31T09:00+02:00",
+    "2026-00-01T09:00Z",
+    "2026-13-01T09:00Z",
+    "2026-01-00T09:00Z",
+    "2026-01-32T09:00Z",
+    "0000-01-01T09:00Z",
+    "+002026-01-01T09:00Z",
+    "10000-01-01T09:00Z",
+    "-000001-01-01T09:00Z",
+  ]) {
+    for (const endpoint of ["start", "end"])
+      invalid.push({ ...pair, [`datetime-range-${endpoint}`]: input });
+  }
+  invalid.push(
+    { "datetime-range-start": pair["datetime-range-start"], "time-zone": "UTC" },
+    { "datetime-range-end": pair["datetime-range-end"], "time-zone": "UTC" },
+    {
+      "datetime-range-start": pair["datetime-range-start"],
+      "datetime-range-end": pair["datetime-range-end"],
+    },
+    {
+      ...pair,
+      "datetime-range-start": "2026-01-01T10:00Z",
+      "datetime-range-end": "2026-01-01T10:30+01:00",
+    },
+  );
+  for (const value of ["", " ", "\t", "Invalid/Zone", " UTC "])
+    invalid.push({ ...pair, "time-zone": value });
+  for (const option of ["date-style", "time-style"])
+    for (const value of ["", " ", "SHORT", " short", "short\n", "invalid"])
+      invalid.push({ ...pair, [option]: value });
+  for (const value of ["", "numeric", "2-digit", "invalid"]) invalid.push({ ...pair, year: value });
+  for (const kind of ["number", "currency", "date", "time", "weekday"])
+    for (const suffix of ["", "-range-start", "-range-end"])
+      invalid.push({ ...pair, [`${kind}${suffix}`]: "1" });
+  for (const option of ["minimum-fraction-digits", "maximum-fraction-digits"])
+    invalid.push({ ...pair, [option]: " 2" });
+  let failures = 0;
+  for (const attributes of invalid) {
+    const element = window.document.createElement("span");
+    element.innerHTML = "<b>unchanged</b>";
+    for (const [name, value] of Object.entries(attributes))
+      element.setAttribute(`data-i18n-${name}`, value);
+    assert.ok(element.matches(extension.selector));
+    assert.throws(
+      () => extension.update(asElement(element), { translator, log() {} }),
+      JSON.stringify(attributes),
+    );
+    assert.equal(element.innerHTML, "<b>unchanged</b>");
+    window.document.body.append(element);
+  }
+  const sibling = window.document.createElement("span");
+  for (const [name, value] of Object.entries(pair))
+    sibling.setAttribute(`data-i18n-${name}`, value);
+  window.document.body.append(sibling);
+  const binding = bindTranslator(translator, asParentNode(window.document.body), {
+    extensions: [extension],
+    logger(entry) {
+      if (entry.event === "dom-extension-failed") failures++;
+      throw new Error("DOM logger");
+    },
+  });
+  assert.equal(failures, invalid.length);
+  assert.equal(
+    sibling.textContent,
+    translator.formatDateTimeRange(
+      new Date(pair["datetime-range-start"]),
+      new Date(pair["datetime-range-end"]),
+      { timeZone: pair["time-zone"] },
+    ),
+  );
+  for (const element of [...window.document.body.children].slice(0, -1))
+    assert.equal(element.innerHTML, "<b>unchanged</b>");
+  binding.dispose();
+  const single = window.document.createElement("span");
+  single.setAttribute("data-i18n-datetime", pair["datetime-range-start"]);
+  single.setAttribute("data-i18n-time-zone", "UTC");
+  assert.equal(single.matches(extension.selector), false);
+});
+
+test("datetime DOM ranges share binding boundaries and refresh lifecycle without host TZ inference", t => {
+  const originalTZ = process.env.TZ;
+  t.after(() => {
+    if (originalTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTZ;
+  });
+  const window = new Window();
+  const translator = new Translator({ language: "en-GB" });
+  const attributes = `data-i18n-datetime-range-start="2026-10-25T03:30+03:00" data-i18n-datetime-range-end="2026-10-25T03:30+02:00" data-i18n-time-zone="Europe/Helsinki"`;
+  const markup = `<span ${attributes}>old</span>`;
+  window.document.body.innerHTML = `<section></section><aside>${markup}</aside>`;
+  const scope = window.document.querySelector("section")!;
+  scope.innerHTML = `${markup}<script ${attributes}>script</script><style ${attributes}>style</style><template>${markup}</template><div></div>`;
+  const element = scope.querySelector("span")!;
+  const expected = () =>
+    translator.formatDateTimeRange(new Date("2026-10-25T00:30Z"), new Date("2026-10-25T01:30Z"), {
+      timeZone: "Europe/Helsinki",
+    });
+  const binding = bindTranslator(translator, asParentNode(scope), {
+    extensions: [intlDomExtension()],
+  });
+  const initial = element.textContent;
+  for (const TZ of ["America/Los_Angeles", "Asia/Tokyo", "UTC"]) {
+    process.env.TZ = TZ;
+    binding.update();
+    assert.equal(element.textContent, expected());
+    assert.equal(element.textContent, initial);
+  }
+  translator.setLanguage("fi");
+  assert.equal(element.textContent, expected());
+  element.textContent = "catalog pending";
+  translator.setTranslation("unrelated", { fi: "value" });
+  assert.equal(element.textContent, expected());
+  binding.setValues(asElement(element), { start: "junk" });
+  assert.equal(element.textContent, expected());
+  assert.equal(window.document.querySelector("aside span")!.textContent, "old");
+  for (const tag of ["script", "style"]) {
+    const excluded = scope.querySelector(tag)!;
+    binding.updateElement(asElement(excluded));
+    assert.equal(excluded.textContent, tag);
+  }
+  const template = scope.querySelector("template")!;
+  assert.equal(template.content.firstElementChild!.textContent, "old");
+  const fragment = template.content.cloneNode(true);
+  binding.update(asParentNode(fragment));
+  assert.equal(fragment.firstChild!.textContent, expected());
+  const shadow = scope.querySelector("div")!.attachShadow({ mode: "open" });
+  shadow.innerHTML = markup;
+  binding.update();
+  assert.equal(shadow.firstElementChild!.textContent, "old");
+  binding.update(asParentNode(shadow));
+  assert.equal(shadow.firstElementChild!.textContent, expected());
+  const previous = element.textContent;
+  element.setAttribute("data-i18n-time-style", "medium");
+  assert.equal(element.textContent, previous);
+  binding.updateElement(asElement(element));
+  assert.equal(
+    element.textContent,
+    translator.formatDateTimeRange(new Date("2026-10-25T00:30Z"), new Date("2026-10-25T01:30Z"), {
+      timeZone: "Europe/Helsinki",
+      dateStyle: "medium",
+      timeStyle: "medium",
+    }),
+  );
+  const before = element.textContent;
+  binding.dispose();
+  element.setAttribute("data-i18n-time-zone", "UTC");
+  translator.setLanguage("ja");
+  binding.update();
+  binding.updateElement(asElement(element));
+  assert.equal(element.textContent, before);
+});
+
+test("datetime DOM missing native range support preserves text and original failures despite loggers", t => {
+  const window = new Window();
+  const translator = new Translator({
+    language: "en",
+    logger() {
+      throw new Error("core logger");
+    },
+  });
+  const extension = intlDomExtension();
+  const element = window.document.createElement("span");
+  element.setAttribute("data-i18n-datetime-range-start", "2026-01-01T09:00Z");
+  element.setAttribute("data-i18n-datetime-range-end", "2026-01-01T10:00Z");
+  element.setAttribute("data-i18n-time-zone", "UTC");
+  extension.update(asElement(element), { translator, log() {} });
+  element.textContent = "old";
+  const prototype = Intl.DateTimeFormat.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, "formatRange")!;
+  t.after(() => Object.defineProperty(prototype, "formatRange", descriptor));
+  Object.defineProperty(prototype, "formatRange", { ...descriptor, value: undefined });
+  assert.throws(
+    () => extension.update(asElement(element), { translator, log() {} }),
+    /Intl.DateTimeFormat.prototype.formatRange/,
+  );
+  assert.equal(element.textContent, "old");
+  window.document.body.append(element);
+  const sibling = window.document.createElement("span");
+  sibling.setAttribute("data-i18n-number", "3");
+  window.document.body.append(sibling);
+  const binding = bindTranslator(translator, asParentNode(window.document.body), {
+    extensions: [extension],
+    logger() {
+      throw new Error("DOM logger");
+    },
+  });
+  assert.equal(element.textContent, "old");
+  assert.equal(sibling.textContent, translator.formatNumber(3));
+  binding.dispose();
+});

@@ -940,6 +940,247 @@ function assertDomRanges(api, dom, Window) {
 
 assertDomRanges(core, dom, Window);
 
+/** Checks strict DOM instant parsing and explicit-zone rendering in either distribution. */
+function assertDatetimeDomRanges(api, dom, Window) {
+  const rendered = [];
+  for (const prefix of ["i18n", "venue-format"]) {
+    const document = new Window().document;
+    const root = document.createElement("section");
+    const logs = [];
+    const logger = entry => {
+      logs.push(entry);
+      throw new Error("consumer logger failure");
+    };
+    const translator = new api.Translator({ language: "en-GB", logger });
+    const calls = [];
+    const format = translator.formatDateTimeRange.bind(translator);
+    translator.formatDateTimeRange = (start, end, options) => {
+      calls.push([start.getTime(), end.getTime(), options]);
+      return format(start, end, options);
+    };
+    const marker = attributes => {
+      const element = document.createElement("span");
+      for (const [name, value] of Object.entries(attributes))
+        element.setAttribute(`data-${prefix}-${name}`, value);
+      element.innerHTML = "<b>retained</b>";
+      root.append(element);
+      return element;
+    };
+    const pair = (start, end, options = {}) => ({
+      "datetime-range-start": start,
+      "datetime-range-end": end,
+      "time-zone": "Europe/Helsinki",
+      ...options,
+    });
+    const fixtures = [];
+    const add = (start, end, nativeStart, nativeEnd, options = {}) => {
+      const attributes = pair(start, end, options);
+      fixtures.push({
+        element: marker(attributes),
+        attributes,
+        start: new Date(nativeStart),
+        end: new Date(nativeEnd),
+      });
+    };
+    // Native oracles use resolved instants, independently of the DOM timestamp parser.
+    for (const [start, end, nativeStart, nativeEnd] of [
+      ["2026-10-03T09:05Z", "2026-10-03T10:05Z", "2026-10-03T09:05:00Z", "2026-10-03T10:05:00Z"],
+      [
+        "2026-10-03T09:05:01.1Z",
+        "2026-10-03T09:05:01.12Z",
+        "2026-10-03T09:05:01.100Z",
+        "2026-10-03T09:05:01.120Z",
+      ],
+      [
+        "2026-10-03T09:05:01.123+00:00",
+        "2026-10-03T09:05:01.123-00:00",
+        "2026-10-03T09:05:01.123Z",
+        "2026-10-03T09:05:01.123Z",
+      ],
+      [
+        "2026-10-03T09:05+02:00",
+        "2026-10-03T07:05Z",
+        "2026-10-03T07:05:00Z",
+        "2026-10-03T07:05:00Z",
+      ],
+      [
+        "2026-10-03T10:00+02:00",
+        "2026-10-03T09:00Z",
+        "2026-10-03T08:00:00Z",
+        "2026-10-03T09:00:00Z",
+      ],
+      [
+        "2026-01-01T00:00+23:59",
+        "2026-01-01T00:00-23:59",
+        "2025-12-31T00:01:00Z",
+        "2026-01-01T23:59:00Z",
+      ],
+      [
+        "0001-01-01T00:00+23:59",
+        "0001-01-01T00:00Z",
+        "0000-12-31T00:01:00Z",
+        "0001-01-01T00:00:00Z",
+      ],
+      [
+        "9999-12-31T23:59Z",
+        "9999-12-31T23:59-23:59",
+        "9999-12-31T23:59:00Z",
+        "+010000-01-01T23:58:00Z",
+      ],
+      ["0099-12-31T23:59Z", "0100-01-01T00:00Z", "0099-12-31T23:59:00Z", "0100-01-01T00:00:00Z"],
+      ["2000-02-29T23:59:59Z", "2000-03-01T00:00Z", "2000-02-29T23:59:59Z", "2000-03-01T00:00:00Z"],
+      ["2024-02-29T00:00Z", "2024-02-29T01:00Z", "2024-02-29T00:00:00Z", "2024-02-29T01:00:00Z"],
+      [
+        "2026-03-29T02:30+02:00",
+        "2026-03-29T04:30+03:00",
+        "2026-03-29T00:30:00Z",
+        "2026-03-29T01:30:00Z",
+      ],
+      [
+        "2026-10-25T03:30+03:00",
+        "2026-10-25T03:30+02:00",
+        "2026-10-25T00:30:00Z",
+        "2026-10-25T01:30:00Z",
+      ],
+    ])
+      add(start, end, nativeStart, nativeEnd);
+    for (const dateStyle of [undefined, "full", "long", "medium", "short"])
+      for (const timeStyle of [undefined, "full", "long", "medium", "short"])
+        for (const zone of ["UTC", "America/New_York", "Europe/Helsinki"])
+          add(
+            "2026-12-31T23:30Z",
+            "2027-01-01T01:30Z",
+            "2026-12-31T23:30:00Z",
+            "2027-01-01T01:30:00Z",
+            {
+              "time-zone": zone,
+              ...(dateStyle ? { "date-style": dateStyle } : {}),
+              ...(timeStyle ? { "time-style": timeStyle } : {}),
+              "format-language": "fi",
+              "currency-code": "invalid",
+              "weekday-width": "invalid",
+            },
+          );
+    const invalid = [];
+    const reject = attributes => invalid.push(marker(attributes));
+    const validStart = "2026-01-01T00:00Z";
+    const validEnd = "2027-01-01T00:00Z";
+    for (const timestamp of [
+      "",
+      " ",
+      "2026-10-03",
+      "2026-10-03T09:05",
+      "2026-10-03t09:05Z",
+      "2026-10-03T09:05z",
+      " 2026-10-03T09:05Z",
+      "2026-10-03T09:05Z ",
+      "2026-10-03 T09:05Z",
+      "2026-10-03T09:05Z\n",
+      "2026-10-03T09:05Zjunk",
+      "+002026-10-03T09:05Z",
+      "-000001-10-03T09:05Z",
+      "0000-01-01T00:00Z",
+      "10000-01-01T00:00Z",
+      "2026-1-03T09:05Z",
+      "2026-10-3T09:05Z",
+      "2026-10-03T9:05Z",
+      "2026-10-03T09:5Z",
+      "2026-10-03T09:05:1Z",
+      "2026-00-03T09:05Z",
+      "2026-13-03T09:05Z",
+      "2026-10-00T09:05Z",
+      "2026-04-31T09:05Z",
+      "2026-02-29T09:05Z",
+      "1900-02-29T09:05Z",
+      "2100-02-29T09:05Z",
+      "2024-02-30T09:05Z",
+      "2026-10-03T24:00Z",
+      "2026-10-03T09:60Z",
+      "2026-10-03T09:05:60Z",
+      "2026-10-03T09:05.1Z",
+      "2026-10-03T09:05:00.Z",
+      "2026-10-03T09:05:00.1234Z",
+      "2026-10-03T09:05:00,1Z",
+      "2026-10-03T09:05+24:00",
+      "2026-10-03T09:05-24:00",
+      "2026-10-03T09:05+00:60",
+      "2026-10-03T09:05-00:60",
+      "2026-10-03T09:05+2:00",
+      "2026-10-03T09:05+0200",
+      "2026-10-03T09:05+02",
+      "October 3, 2026 09:05 UTC",
+      "２０２６-10-03T09:05Z",
+    ]) {
+      reject(pair(timestamp, validEnd));
+      reject(pair(validStart, timestamp));
+    }
+    for (const attributes of [
+      { "datetime-range-start": validStart, "time-zone": "UTC" },
+      { "datetime-range-end": validEnd, "time-zone": "UTC" },
+      { "datetime-range-start": validStart, "datetime-range-end": validEnd },
+      pair("2026-10-03T09:00Z", "2026-10-03T10:00+02:00"),
+      pair(validStart, validEnd, { number: "1" }),
+      pair(validStart, validEnd, { "date-range-end": "2026-10-03" }),
+      pair(validStart, validEnd, { "time-range-start": "09:00", "time-range-end": "10:00" }),
+      pair(validStart, validEnd, { "minimum-fraction-digits": " 2" }),
+      pair(validStart, validEnd, { "maximum-fraction-digits": "21" }),
+    ])
+      reject(attributes);
+    for (const zone of ["", " ", "Not/A_Zone", " UTC", "UTC "])
+      reject(pair(validStart, validEnd, { "time-zone": zone }));
+    for (const option of ["date-style", "time-style"])
+      for (const token of ["", " ", "Short", " short", "short ", "invalid"])
+        reject(pair(validStart, validEnd, { [option]: token }));
+    for (const year of ["", "numeric", "2-digit", "invalid"])
+      reject(pair(validStart, validEnd, { year }));
+    const optionsOnly = marker({ "time-zone": "invalid", "date-style": "invalid" });
+    const unsupportedSingle = marker({ datetime: validStart, "time-zone": "UTC" });
+    const binding = dom.bindTranslator(translator, root, {
+      logger,
+      extensions: [dom.intlDomExtension({ attributePrefix: prefix })],
+    });
+    const check = language => {
+      for (const { element, attributes, start, end } of fixtures) {
+        const expected = new Intl.DateTimeFormat(attributes["format-language"] ?? language, {
+          dateStyle: attributes["date-style"] ?? "medium",
+          timeStyle: attributes["time-style"] ?? "short",
+          timeZone: attributes["time-zone"],
+        }).formatRange(start, end);
+        assert.equal(element.textContent, expected, element.outerHTML);
+        assert.equal(element.children.length, 0);
+        assert.deepEqual(
+          [...element.attributes].map(attribute => [attribute.name, attribute.value]),
+          Object.entries(attributes).map(([name, value]) => [`data-${prefix}-${name}`, value]),
+        );
+        rendered.push(expected);
+      }
+      for (const element of [...invalid, optionsOnly, unsupportedSingle])
+        assert.equal(element.innerHTML, "<b>retained</b>", element.outerHTML);
+    };
+    check("en-GB");
+    assert.equal(
+      logs.filter(entry => entry.event === "dom-extension-failed").length,
+      invalid.length,
+    );
+    for (let index = 0; index < fixtures.length; index++) {
+      assert.equal(calls[index][0], fixtures[index].start.getTime());
+      assert.equal(calls[index][1], fixtures[index].end.getTime());
+      assert.equal(calls[index][2].dateStyle, fixtures[index].attributes["date-style"] ?? "medium");
+      assert.equal(calls[index][2].timeStyle, fixtures[index].attributes["time-style"] ?? "short");
+      assert.equal(calls[index][2].timeZone, fixtures[index].attributes["time-zone"]);
+    }
+    translator.setLanguage("ja-JP");
+    check("ja-JP");
+    fixtures[0].element.textContent = "manual";
+    translator.setTranslation("refresh", { "ja-JP": "refresh" });
+    check("ja-JP");
+    binding.dispose();
+  }
+  return rendered;
+}
+
+assertDatetimeDomRanges(core, dom, Window);
+
 const typescriptManifest = fileURLToPath(import.meta.resolve("typescript/package.json"));
 const typescript = resolve(dirname(typescriptManifest), "bin/tsc");
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
@@ -966,6 +1207,10 @@ const npm = (args, cwd) =>
 /** Generates the same strict temporal contract checks for built and installed roots. */
 function temporalConsumerSource(entry) {
   return `import * as temporal from ${JSON.stringify(entry)};
+    // @ts-expect-error Timestamp parsing stays private to the DOM boundary.
+    temporal.parseDateTime;
+    // @ts-expect-error Datetime ranges use the existing /dom extension only.
+    temporal.intlDomExtension;
     const options: temporal.DateTimeFormatOptions = { timeZone: "Europe/Helsinki", language: "fi" };
     const translator = new temporal.Translator();
     ${["", "ToParts", "Range", "RangeToParts"]
@@ -1098,10 +1343,15 @@ function domRangeConsumerSource(root, entry) {
     const extension: TranslatorDomExtension = intlDomExtension(options);
     const translator = new core.Translator({ language: "en" });
     const root = document.createDocumentFragment();
-    for (const kind of ["number", "currency", "date", "time", "weekday"]) {
+    for (const kind of ["number", "currency", "date", "time", "weekday", "datetime"]) {
       const element = document.createElement("span");
-      element.setAttribute("data-venue-format-" + kind + "-range-start", "0");
-      element.setAttribute("data-venue-format-" + kind + "-range-end", "4");
+      element.setAttribute("data-venue-format-" + kind + "-range-start", kind === "datetime" ? "2026-10-03T09:00+02:00" : "0");
+      element.setAttribute("data-venue-format-" + kind + "-range-end", kind === "datetime" ? "2026-10-03T10:00+02:00" : "4");
+      if (kind === "datetime") {
+        element.setAttribute("data-venue-format-time-zone", "Europe/Helsinki");
+        element.setAttribute("data-venue-format-date-style", "long");
+        element.setAttribute("data-venue-format-time-style", "full");
+      }
       root.append(element);
     }
     const binding: TranslatorDomBinding = bindTranslator(translator, root, {
@@ -1117,6 +1367,8 @@ function domRangeConsumerSource(root, entry) {
     intlDomExtension({ attributePrefix: {} });
     // @ts-expect-error Ranges use attributes, not new factory options.
     intlDomExtension({ range: true });
+    // @ts-expect-error Output zones belong to element attributes, not extension options.
+    intlDomExtension({ timeZone: "Europe/Helsinki" });
   `;
 }
 
@@ -1167,6 +1419,7 @@ try {
           (${assertDateTimeContract.toString()})(core, translator);
           (${assertWeekdayRanges.toString()})(core, translator);
           (${assertDomRanges.toString()})(core, dom, Window);
+          (${assertDatetimeDomRanges.toString()})(core, dom, Window);
       const catalogEvents = [];
       const unsubscribeCatalog = translator.subscribeCatalog(event => catalogEvents.push(event));
       translator.setTranslation("smoke", { en: "Installed package" });
@@ -1202,6 +1455,34 @@ try {
     ],
     { cwd: consumer, stdio: "inherit" },
   );
+
+  // Resolve the same explicit zones in fresh hosts with different default time zones.
+  for (const [rootEntry, domEntry] of [
+    [
+      new URL("../dist/index.js", import.meta.url).href,
+      new URL("../dist/dom.js", import.meta.url).href,
+    ],
+    ["@unilarva/translator", "@unilarva/translator/dom"],
+  ]) {
+    const results = ["UTC", "America/Los_Angeles", "Asia/Tokyo"].map(TZ =>
+      execFileSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `
+        import assert from "node:assert/strict";
+        import * as core from ${JSON.stringify(rootEntry)};
+        import * as dom from ${JSON.stringify(domEntry)};
+        import { Window } from ${JSON.stringify(import.meta.resolve("happy-dom"))};
+        process.stdout.write(JSON.stringify((${assertDatetimeDomRanges.toString()})(core, dom, Window)));
+      `,
+        ],
+        { cwd: consumer, env: { ...process.env, TZ }, encoding: "utf8" },
+      ),
+    );
+    for (const result of results) assert.equal(result, results[0]);
+  }
 
   for (const missing of ["formatRange", "formatRangeToParts"]) {
     execFileSync(

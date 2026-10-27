@@ -2067,6 +2067,10 @@ test("core types compile without ambient types and retain native abort/fetch com
       join(directory, "clean.ts"),
       `${imports}
       import * as temporal from ${JSON.stringify(index)};
+      // @ts-expect-error DOM timestamp parsing is not a public core API.
+      temporal.parseDateTime;
+      // @ts-expect-error DOM extensions remain outside the DOM-free root.
+      temporal.intlDomExtension;
       const instantOptions: temporal.DateTimeFormatOptions = { timeZone: "Europe/Helsinki", language: "fi" };
       ${["", "ToParts", "Range", "RangeToParts"]
         .map(suffix => {
@@ -2480,10 +2484,15 @@ test("core types compile without ambient types and retain native abort/fetch com
       const options: IntlDomExtensionOptions = { attributePrefix: "venue-format" };
       const extension: TranslatorDomExtension = intlDomExtension(options);
       const root = document.createDocumentFragment();
-      for (const kind of ["number", "currency", "date", "time", "weekday"]) {
+      for (const kind of ["number", "currency", "date", "time", "weekday", "datetime"]) {
         const element = document.createElement("span");
-        element.setAttribute("data-venue-format-" + kind + "-range-start", "0");
-        element.setAttribute("data-venue-format-" + kind + "-range-end", "4");
+        element.setAttribute("data-venue-format-" + kind + "-range-start", kind === "datetime" ? "2026-10-03T09:00+02:00" : "0");
+        element.setAttribute("data-venue-format-" + kind + "-range-end", kind === "datetime" ? "2026-10-03T10:00+02:00" : "4");
+        if (kind === "datetime") {
+          element.setAttribute("data-venue-format-time-zone", "Europe/Helsinki");
+          element.setAttribute("data-venue-format-date-style", "long");
+          element.setAttribute("data-venue-format-time-style", "full");
+        }
         root.append(element);
       }
       const binding: TranslatorDomBinding = bindTranslator(new Translator(), root, {
@@ -2499,6 +2508,10 @@ test("core types compile without ambient types and retain native abort/fetch com
       intlDomExtension({ attributePrefix: {} });
       // @ts-expect-error Ranges use HTML attributes, not a new extension option.
       intlDomExtension({ range: true });
+      // @ts-expect-error Output zones remain element attributes, not factory configuration.
+      intlDomExtension({ timeZone: "Europe/Helsinki" });
+      // @ts-expect-error Timestamp parsing is private, not a new public root API.
+      core.parseDateTime;
     `,
     );
     for (const [name, lib] of [

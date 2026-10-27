@@ -36,6 +36,7 @@ updates. Package internals and contributor workflows are documented in
   - [Scoped And Nested Bindings](#scoped-and-nested-bindings)
   - [Markers](#markers)
 - [Formatting Extension](#formatting-extension)
+  - [Datetime DOM Ranges](#datetime-dom-ranges)
 - [Semantic Rich Translations](#semantic-rich-translations)
 - [Custom DOM Extensions](#custom-dom-extensions)
 - [Localized Resources](#localized-resources)
@@ -918,8 +919,8 @@ a generic migration. Calendar calls must remove forbidden options, even properti
 
 If host-zone presentation is genuinely intended, the application can resolve its chosen zone and
 pass it explicitly. Do not automatically replace an intended location's zone with the viewer's zone.
-The datetime APIs have no DOM markers; field-based singles and ranges use the opt-in
-[formatting extension](#formatting-extension).
+The opt-in [formatting extension](#formatting-extension) supports field-based singles/ranges and
+explicitly zoned datetime ranges, with strict timestamp parsing only at the DOM boundary.
 
 ### Datetime Instants
 
@@ -1006,7 +1007,8 @@ imports or other operations. Locale override and no-state-event rules match othe
 Standalone helpers throw without logging. Translator methods safely log the original error as
 `datetime-format-failed`, `datetime-format-to-parts-failed`, `datetime-range-format-failed`, or
 `datetime-range-format-to-parts-failed`, then rethrow the identical error even if logging fails.
-Calendar failures retain the existing date diagnostics. There are no datetime DOM markers.
+Calendar failures retain the existing date diagnostics. Datetime DOM ranges are described in the
+[formatting extension](#formatting-extension); they do not broaden these Date-only core inputs.
 
 ### Structured Formatting Parts
 
@@ -1851,13 +1853,14 @@ const binding = bindTranslator(translator, document.documentElement, {
 
 The same `intlDomExtension()` supports these single markers and complete endpoint pairs:
 
-| Kind          | Single value         | Range start                      | Range end                      |
-| ------------- | -------------------- | -------------------------------- | ------------------------------ |
-| Number        | `data-i18n-number`   | `data-i18n-number-range-start`   | `data-i18n-number-range-end`   |
-| Currency      | `data-i18n-currency` | `data-i18n-currency-range-start` | `data-i18n-currency-range-end` |
-| Calendar date | `data-i18n-date`     | `data-i18n-date-range-start`     | `data-i18n-date-range-end`     |
-| Clock time    | `data-i18n-time`     | `data-i18n-time-range-start`     | `data-i18n-time-range-end`     |
-| Weekday       | `data-i18n-weekday`  | `data-i18n-weekday-range-start`  | `data-i18n-weekday-range-end`  |
+| Kind             | Single value         | Range start                      | Range end                      |
+| ---------------- | -------------------- | -------------------------------- | ------------------------------ |
+| Number           | `data-i18n-number`   | `data-i18n-number-range-start`   | `data-i18n-number-range-end`   |
+| Currency         | `data-i18n-currency` | `data-i18n-currency-range-start` | `data-i18n-currency-range-end` |
+| Calendar date    | `data-i18n-date`     | `data-i18n-date-range-start`     | `data-i18n-date-range-end`     |
+| Clock time       | `data-i18n-time`     | `data-i18n-time-range-start`     | `data-i18n-time-range-end`     |
+| Weekday          | `data-i18n-weekday`  | `data-i18n-weekday-range-start`  | `data-i18n-weekday-range-end`  |
+| Datetime instant | None                 | `data-i18n-datetime-range-start` | `data-i18n-datetime-range-end` |
 
 ```html
 <span data-i18n-number-range-start="1000" data-i18n-number-range-end="2000"></span>
@@ -1877,6 +1880,11 @@ The same `intlDomExtension()` supports these single markers and complete endpoin
   data-i18n-time-style="short"
 ></span>
 <span data-i18n-weekday-range-start="4" data-i18n-weekday-range-end="0"></span>
+<span
+  data-i18n-datetime-range-start="2026-09-30T23:30Z"
+  data-i18n-datetime-range-end="2026-10-01T04:00:00+03:00"
+  data-i18n-time-zone="Europe/Helsinki"
+></span>
 ```
 
 An element must select **exactly one single-value kind or one complete range pair**. A pair is one
@@ -1894,16 +1902,16 @@ pairs wrap forward through Sunday, and equal endpoints mean one weekday, not a w
 
 Options are shared between singles and ranges; there are no range-only option spellings:
 
-| Attribute                                                                 | Applies to                                               | Contract                                                                                        |
-| ------------------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `data-i18n-format-language`                                               | All kinds                                                | Overrides the active formatting language, not translation fallback.                             |
-| `data-i18n-currency-code`                                                 | Currency                                                 | Required three-letter currency identifier.                                                      |
-| `data-i18n-minimum-fraction-digits` / `data-i18n-maximum-fraction-digits` | Validated for all kinds; applied only to number/currency | Unsigned decimal integer strings `0` through `20`, including leading zeros.                     |
-| `data-i18n-year`                                                          | Calendar date                                            | `numeric` or `2-digit`; incompatible by presence with `date-style`.                             |
-| `data-i18n-weekday-width`                                                 | Weekday                                                  | `long`, `short`, or `narrow`; default `long`.                                                   |
-| `data-i18n-date-style`                                                    | Calendar date                                            | Exact `full`, `long`, `medium`, or `short`.                                                     |
-| `data-i18n-time-style`                                                    | Clock time                                               | Exact `short` or `medium`; replaces component/seconds defaults.                                 |
-| `data-i18n-time-zone`                                                     | No supported temporal target                             | Forbidden by presence on calendar, clock, and weekday targets; does not enable zone conversion. |
+| Attribute                                                                 | Applies to                                               | Contract                                                                                                                                 |
+| ------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `data-i18n-format-language`                                               | All kinds                                                | Overrides the active formatting language, not translation fallback.                                                                      |
+| `data-i18n-currency-code`                                                 | Currency                                                 | Required three-letter currency identifier.                                                                                               |
+| `data-i18n-minimum-fraction-digits` / `data-i18n-maximum-fraction-digits` | Validated for all kinds; applied only to number/currency | Unsigned decimal integer strings `0` through `20`, including leading zeros.                                                              |
+| `data-i18n-year`                                                          | Calendar date                                            | `numeric` or `2-digit`; incompatible by presence with `date-style`; forbidden by presence on datetime.                                   |
+| `data-i18n-weekday-width`                                                 | Weekday                                                  | `long`, `short`, or `narrow`; default `long`.                                                                                            |
+| `data-i18n-date-style`                                                    | Calendar date, datetime                                  | Exact `full`, `long`, `medium`, or `short`; datetime default `medium`.                                                                   |
+| `data-i18n-time-style`                                                    | Clock time, datetime                                     | Clock: exact `short` or `medium`, replacing component/seconds defaults. Datetime: `full`, `long`, `medium`, or `short`, default `short`. |
+| `data-i18n-time-zone`                                                     | Datetime                                                 | Required nonblank output zone supported by host Intl; forbidden by presence on calendar, clock, and weekday.                             |
 
 Style tokens are case-sensitive and untrimmed; empty, blank, padded, and unknown tokens fail.
 Calendar `date-style` and legacy `year` are mutually exclusive by **attribute presence**, including
@@ -1919,7 +1927,50 @@ new temporal options, even malformed ones. Fraction markers retain their legacy 
 kind: blanks, whitespace, signs, exponents, and hexadecimal notation fail, even on a temporal target
 where fractions are not applied. This `0`-`20` limit is narrower than some newer Intl implementations.
 Other legacy kind-specific attributes retain their existing reads only for their own kind; unrelated
-legacy options do not become new validation errors.
+legacy options do not become new validation errors, except datetime's explicit `year` prohibition.
+
+### Datetime DOM Ranges
+
+Only the complete `data-i18n-datetime-range-start` / `data-i18n-datetime-range-end` pair is supported,
+not a single datetime marker. Each endpoint accepts exactly this grammar (brackets denote optional
+fields, and `f{1,3}` means one to three ASCII fraction digits):
+
+```text
+YYYY-MM-DDTHH:MM[:SS[.f{1,3}]](Z|+HH:MM|-HH:MM)
+```
+
+Use ASCII digits, fixed-width fields, literal punctuation and uppercase `T`/`Z`. No whitespace
+anywhere, lowercase, trailing junk, signed/expanded years, date-only values, zone-less timestamps or
+natural-language dates are accepted. Wall years must be `0001` through `9999`, with valid proleptic
+Gregorian month/day fields, including the divisible-by-4/100/400 leap-year rules. Hours are `00`-`23`
+and minutes/seconds `00`-`59`: no `24:00`, leap seconds or overflow normalization. Omitted seconds
+are zero. Fractions require explicit seconds and exactly 1-3 digits, right-padded to milliseconds
+(`.1` is 100 ms, `.12` is 120 ms), never rounded or truncated.
+
+Numeric offset hours are `00`-`23` and minutes `00`-`59`, through magnitude `23:59`. Both `+00:00`
+and `-00:00` mean UTC, not an unknown-offset sentinel. These numeric offsets identify instants, not
+necessarily geographical zones. After validating wall fields, the private parser subtracts the
+signed offset from the UTC-anchored fields. The converted instant may cross the input day/year
+bounds, including years outside `0001`-`9999`. Endpoints may use different offsets; ordering is by
+converted instant, with reversed pairs rejected and equal pairs retaining native range behavior.
+
+`data-i18n-time-zone` is required: a primitive nonblank string supported by host Intl, passed without
+DOM trimming or normalization. Missing, blank or unsupported zones fail without fallback. The output
+zone is never inferred from the browser/host, locale, translator language or endpoint offsets.
+Prefer a named IANA zone for locations with seasonal rules.
+
+DOM datetime always supplies **both** `dateStyle` and `timeStyle`: absent `date-style` means `medium`,
+absent `time-style` means `short`. Each exact, untrimmed, case-sensitive `full`/`long`/`medium`/`short`
+token replaces only its own default. Supplying only `date-style="long"` still includes short time;
+supplying only `time-style="medium"` still includes medium date. This differs intentionally from
+core datetime APIs, where one explicit style replaces both defaults and can project date-only or
+time-only output. Legacy `year` is forbidden by attribute presence, even empty. Other unrelated
+legacy options remain ignored/not read; fraction markers are still validated for every kind.
+
+Parsing is private to this DOM adapter, which delegates Dates to `formatDateTimeRange()`. There is
+no public timestamp parser, and no widening of core Date-only datetime inputs or calendar/clock
+string grammars. Resolving local editor fields into instants, DST gaps/overlaps and scheduling remain
+application-owned.
 
 Values come from attributes, not catalog keys or interpolation values. Each range delegates to its
 matching Translator range method and assigns the **one native range string** to `textContent`.
@@ -1939,18 +1990,19 @@ const binding = bindTranslator(translator, root, {
 
 ```html
 <span
-  data-preview-date-range-start="2026-09-30"
-  data-preview-date-range-end="2026-10-02"
-  data-preview-date-style="medium"
+  data-preview-datetime-range-start="2026-09-30T23:30Z"
+  data-preview-datetime-range-end="2026-10-01T01:00Z"
+  data-preview-time-zone="Europe/Helsinki"
+  data-preview-date-style="long"
+  data-preview-time-style="medium"
 ></span>
 ```
 
 Initial, manual, language, and enabled catalog refreshes reuse the ordinary binding lifecycle.
 Call `binding.update()` after editing markers or inserting targets; there is no mutation observer.
 Disposal stops later updates. Script/style exclusions, prefix ownership, and template/fragment/shadow
-root boundaries remain those of the binding. There are no datetime-instant, relative-time,
-plural-selection, or parts-rendering DOM markers, and no DOM timestamp parser. Datetime DOM ranges
-are deferred; use the existing explicit-zone datetime APIs with application-owned rendering meanwhile.
+root boundaries remain those of the binding. There are no single-datetime, relative-time,
+plural-selection, or parts-rendering DOM markers.
 
 ## Semantic Rich Translations
 

@@ -45,7 +45,8 @@ servers, workers, and command-line tools; browser integration is isolated in
   explicit output time zone through the separate datetime APIs. Native number, currency, calendar,
   datetime, clock-time, and recurring contiguous weekday ranges include strings and source-tagged parts.
   The opt-in `intlDomExtension()` renders number, currency, calendar-date, clock-time, and weekday
-  singles/ranges as native text, with calendar/clock style options and configurable marker prefixes.
+  singles/ranges and explicitly zoned datetime ranges as native text, with temporal style options
+  and configurable marker prefixes.
 - **Scoped UIs and synchronized language controls.** Bind a document or subtree, use independent
   translators for previews, and connect existing native selects or details dropdowns to an observable
   language registry. Direction synchronization is opt-in; styling and persistence stay application-owned.
@@ -229,11 +230,14 @@ language detection, persistence, routing, and styling. The guide covers
 [semantic rich-text extensions](./USAGE.md#semantic-rich-translations).
 
 The existing `intlDomExtension()` accepts complete `data-i18n-KIND-range-start` and
-`data-i18n-KIND-range-end` pairs for `number`, `currency`, `date`, `time`, and `weekday`.
+`data-i18n-KIND-range-end` pairs for `number`, `currency`, `date`, `time`, `weekday`, and `datetime`.
 Each element selects exactly one single value or complete pair; output is one native string assigned
-to `textContent`, not parts or HTML. Date styles support `full`/`long`/`medium`/`short`; clock styles
-support `short`/`medium`. See the [formatting extension](./USAGE.md#formatting-extension) for option
-applicability and validation. Datetime-instant markers and timestamp parsing are not supported yet.
+to `textContent`, not parts or HTML. Datetime pairs require an explicit output zone and strict
+offset-bearing timestamps parsed privately at the DOM boundary; core datetime APIs still accept
+only Dates. DOM datetime defaults independently to medium date and short time, unlike core
+one-style projections. See the [formatting extension](./USAGE.md#formatting-extension) for the full
+marker/style matrix, timestamp grammar, validation and refresh rules. No single-datetime marker
+or public timestamp parser is provided.
 
 Details dropdown bindings prevent default button actions for accepted language choices, including
 form submission. Consumer-owned choice buttons should still declare `type="button"` for safety

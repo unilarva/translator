@@ -2062,7 +2062,7 @@ test("core types compile without ambient types and retain native abort/fetch com
     "bin/tsc",
   );
   try {
-    const imports = `import type { TranslationAbortSignal, TranslatorFetch, LanguageChangeEvent, LanguageRegistryChangeEvent } from ${JSON.stringify(types)};\nimport { Translator } from ${JSON.stringify(index)};\n`;
+    const imports = `import type { TranslationAbortSignal, TranslatorFetch, LanguageChangeEvent, LanguageRegistryChangeEvent } from ${JSON.stringify(types)};\nimport { Translator, formatNumberToParts, formatCurrencyToParts, formatRelativeTimeToParts } from ${JSON.stringify(index)};\n`;
     await writeFile(
       join(directory, "clean.ts"),
       `${imports}
@@ -2074,6 +2074,52 @@ test("core types compile without ambient types and retain native abort/fetch com
       declare const registry: LanguageRegistryChangeEvent;
       // @ts-expect-error Registry event wrappers are immutable.
       registry.languages = [];
+      const translator = new Translator();
+      const rounding: Intl.NumberFormatOptions = {
+        roundingMode: "halfEven", roundingPriority: "morePrecision",
+        roundingIncrement: 1, trailingZeroDisplay: "stripIfInteger",
+      };
+      const number: Intl.NumberFormatPart[] = formatNumberToParts(1.25, "en", rounding);
+      const currency: Intl.NumberFormatPart[] = formatCurrencyToParts(1.25, "en", { ...rounding, currency: "EUR" });
+      const relative: Intl.RelativeTimeFormatPart[] = formatRelativeTimeToParts(-1, "day", "en", { numeric: "auto" });
+      const methodNumber: Intl.NumberFormatPart[] = translator.formatNumberToParts(1.25, { ...rounding, language: "fi" });
+      const methodCurrency: Intl.NumberFormatPart[] = translator.formatCurrencyToParts(1.25, { ...rounding, currency: "EUR" });
+      const methodRelative: Intl.RelativeTimeFormatPart[] = translator.formatRelativeTimeToParts(1, "weeks");
+      for (const part of relative) {
+        if (part.type !== "literal") {
+          const unit: Intl.RelativeTimeFormatUnitSingular = part.unit;
+        }
+      }
+      // @ts-expect-error Numeric strings are not accepted even by newer native declarations.
+      formatNumberToParts("1", "en");
+      // @ts-expect-error Bigints remain outside the finite-number contract.
+      translator.formatNumberToParts(1n);
+      // @ts-expect-error Currency values must be numbers.
+      formatCurrencyToParts(1n, "en", { currency: "EUR" });
+      // @ts-expect-error Currency methods do not coerce numeric strings.
+      translator.formatCurrencyToParts("1", { currency: "EUR" });
+      // @ts-expect-error Currency options are required.
+      formatCurrencyToParts(1, "en");
+      // @ts-expect-error The currency code is required.
+      formatCurrencyToParts(1, "en", {});
+      // @ts-expect-error Currency method options are required.
+      translator.formatCurrencyToParts(1);
+      // @ts-expect-error The currency method requires a code.
+      translator.formatCurrencyToParts(1, {});
+      // @ts-expect-error Relative values must be numbers, not numeric strings.
+      formatRelativeTimeToParts("1", "day", "en");
+      // @ts-expect-error Relative methods do not accept bigint.
+      translator.formatRelativeTimeToParts(1n, "day");
+      // @ts-expect-error Only native relative-time units are accepted.
+      formatRelativeTimeToParts(1, "fortnight", "en");
+      // @ts-expect-error Methods retain the native unit union.
+      translator.formatRelativeTimeToParts(1, "fortnight");
+      // @ts-expect-error Parts helpers return arrays, not strings.
+      const wrongNumber: string = formatNumberToParts(1, "en");
+      // @ts-expect-error Currency parts methods return arrays, not strings.
+      const wrongCurrency: string = translator.formatCurrencyToParts(1, { currency: "EUR" });
+      // @ts-expect-error Relative parts methods return arrays, not strings.
+      const wrongRelative: string = translator.formatRelativeTimeToParts(1, "day");
     `,
     );
     await writeFile(
@@ -2087,8 +2133,9 @@ test("core types compile without ambient types and retain native abort/fetch com
     `,
     );
     for (const [name, lib] of [
-      ["clean", ["ES2022"]],
-      ["native", ["ES2022", "DOM"]],
+      ["clean", ["ES2023"]],
+      ["clean", ["ES2022", "ES2023.Intl"]],
+      ["native", ["ES2023", "DOM"]],
     ] as const) {
       const config = join(directory, `${name}.json`);
       await writeFile(
@@ -2102,6 +2149,7 @@ test("core types compile without ambient types and retain native abort/fetch com
             moduleResolution: "Bundler",
             allowImportingTsExtensions: true,
             types: [],
+            skipLibCheck: false,
             lib,
           },
           files: [`${name}.ts`],

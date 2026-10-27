@@ -21,6 +21,7 @@ updates. Package internals and contributor workflows are documented in
   - [Browser Language Example](#browser-language-example)
 - [Loading Files](#loading-files)
 - [Locale Formatting](#locale-formatting)
+  - [Structured Formatting Parts](#structured-formatting-parts)
   - [Relative Time And Plural Selection](#relative-time-and-plural-selection)
 - [Logging](#logging)
 - [DOM Binding](#dom-binding)
@@ -44,6 +45,12 @@ npm install @unilarva/translator
 
 The package is ESM-only, targets ES2022, and has no runtime dependencies. Node.js consumers require
 Node `22.13.0` or newer. Browser and worker support depends on the host's ES2022 and `Intl` support.
+
+TypeScript consumers require `lib: ["ES2023"]` or `lib: ["ES2022", "ES2023.Intl"]` for the root
+declarations, without DOM or Node ambient types. Add `DOM` only for browser integration. This
+declaration-library requirement does not raise the emitted ES2022 target or the Node minimum.
+Libraries supply types, not runtime polyfills; native Intl methods and options still require host
+support.
 
 The root entry is DOM-free:
 
@@ -870,6 +877,89 @@ by `Intl`; the adapters do not validate every future platform option. Translator
 first when a logger is configured, then rethrow them. Exact locale output depends on the host's
 `Intl` implementation and installed locale data.
 
+### Structured Formatting Parts
+
+The root entry exports three native parts helpers alongside the existing string formatters:
+
+```ts
+function formatNumberToParts(
+  value: number,
+  language: string,
+  options?: NumberFormatOptions,
+): Intl.NumberFormatPart[];
+function formatCurrencyToParts(
+  value: number,
+  language: string,
+  options: CurrencyFormatOptions,
+): Intl.NumberFormatPart[];
+function formatRelativeTimeToParts(
+  value: number,
+  unit: Intl.RelativeTimeFormatUnit,
+  language: string,
+  options?: RelativeTimeFormatOptions,
+): Intl.RelativeTimeFormatPart[];
+```
+
+Matching Translator methods omit the explicit language argument:
+
+```ts
+translator.formatNumberToParts(1234.5);
+translator.formatCurrencyToParts(12.5, { currency: "eur", language: "fi-FI" });
+translator.formatRelativeTimeToParts(-1, "day", { numeric: "auto" });
+```
+
+Standalone calls take an explicit language, while methods default to the active language. For both,
+`options.language` overrides that language; tags are trimmed, underscore-normalized, and canonicalized.
+Formatting never uses the catalog or primary/additional translation fallback to choose its locale.
+
+```ts
+import {
+  formatCurrencyToParts,
+  formatNumberToParts,
+  formatRelativeTimeToParts,
+} from "@unilarva/translator";
+
+const numberParts = formatNumberToParts(1234.5, "en-US");
+const currencyParts = formatCurrencyToParts(12.5, "fi-FI", { currency: "EUR" });
+const relativeParts = formatRelativeTimeToParts(-1, "day", "en", { numeric: "auto" });
+```
+
+These helpers use the same parsed values, effective options, and defaults as their string counterparts.
+Number options default to `{}` and preserve native number defaults. Currency options are required:
+the three-ASCII-letter code is uppercased, currency style is forced, and native currency defaults
+apply. Relative-time options default to `{}`, retaining `style: "long"` and `numeric: "always"`;
+singular and plural units retain native validation and coercion. The application still chooses the
+unit and computes the difference.
+
+All three require finite JavaScript numbers. `NaN`, infinities, numeric strings, bigint, and other
+non-number inputs throw `RangeError` without numeric coercion. Invalid effective locales, currency
+codes, and recognized options throw under the same strict/native rules as string formatting;
+native option/coercion errors propagate unchanged. Newer TypeScript Intl options are passed through,
+but declarations do not guarantee that every host implements them.
+
+Results are fresh, mutable, caller-owned native arrays with fresh part records, not frozen snapshots.
+The package caches formatters, never result arrays or records; mutating a result cannot affect later
+calls. Native order, part types, and literal text are preserved, not reconstructed by splitting a
+formatted string. Relative-time literal parts, including an entire word such as `"yesterday"`, may
+lack `unit`; check the part's shape before reading it.
+
+Parts are structured text, not HTML or a safe-HTML representation. Consumers own rendering and
+context-appropriate escaping. These APIs add no DOM markers or automatic UI updates. Date, clock-time,
+and weekday parts and all range APIs remain future work; existing string return types are unchanged.
+
+Each parts call checks only its required native method at call time:
+`Intl.NumberFormat.prototype.formatToParts` for number/currency, or
+`Intl.RelativeTimeFormat.prototype.formatToParts` for relative time. If unavailable, it throws an
+actionable `TypeError` identifying the missing method and the need for a supporting runtime or a
+consumer-provided polyfill. Imports and unrelated operations do not probe or require that method;
+there is no string-splitting fallback or package-installed polyfill.
+
+Standalone helpers throw without logging. Translator methods log the original failure through the
+safe logger adapter as `number-format-to-parts-failed`, `currency-format-to-parts-failed`, or
+`relative-time-format-to-parts-failed`, then rethrow the identical error, including option-coercion
+and missing-method failures. Logger failures do not replace that error. Parts calls do not mutate
+translator settings or emit language, catalog, or registry events.
+
 ### Relative Time And Plural Selection
 
 The root entry exports these additive APIs and option types:
@@ -1536,6 +1626,8 @@ The root entry exports:
 - `createTypedTranslate()` for opt-in [typed key wrappers](#typed-keys);
 - standalone number, currency, calendar-date, clock-time, weekday, and relative-time formatters,
   plus `selectPlural()` returning `Intl.LDMLPluralRule`;
+- `formatNumberToParts()`, `formatCurrencyToParts()`, and `formatRelativeTimeToParts()`, also available
+  as Translator methods, returning native mutable parts arrays;
 - `RelativeTimeFormatOptions` and `PluralSelectOptions`, combining their native `Intl` options
   with `LocaleFormatOptions`;
 - `parseRichText()` and `translateRichText()`;

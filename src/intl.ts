@@ -270,13 +270,43 @@ export function formatNumber(
   language: string,
   options: NumberFormatOptions = {},
 ): string {
+  return numberFormatter(language, options).format(finiteNumber(value, "Number"));
+}
+
+/** Prepares the number option snapshot and reuses its formatter across result forms. */
+function numberFormatter(language: string, options: NumberFormatOptions): Intl.NumberFormat {
   const { language: languageOverride, ...intlOptions } = options;
   const tag = locale(languageOverride ?? language);
   return cachedFormatter(
     numberFormatters,
     formatterKey(tag, intlOptions),
     () => new Intl.NumberFormat(tag, intlOptions),
-  ).format(finiteNumber(value, "Number"));
+  );
+}
+
+/**
+ * Formats a finite number as native structured parts using Intl defaults.
+ * @param value - Finite number; numeric strings and bigint are not accepted.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Native number options and locale override; defaults to `{}`.
+ * @returns Fresh, caller-owned mutable parts and records in native order; no HTML is produced.
+ * @throws {RangeError} If the number is nonfinite or the effective locale/options are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.NumberFormat.prototype.formatToParts`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatNumberToParts(
+  value: number,
+  language: string,
+  options: NumberFormatOptions = {},
+): Intl.NumberFormatPart[] {
+  const formatter = numberFormatter(language, options);
+  const number = finiteNumber(value, "Number");
+  if (typeof formatter.formatToParts !== "function") {
+    throw new TypeError(
+      "Intl.NumberFormat.prototype.formatToParts is unavailable; use a supporting runtime or consumer-provided polyfill",
+    );
+  }
+  return formatter.formatToParts(number);
 }
 
 /**
@@ -297,12 +327,50 @@ export function formatRelativeTime(
   language: string,
   options: RelativeTimeFormatOptions = {},
 ): string {
+  return relativeTimeFormatter(language, options).format(
+    finiteNumber(value, "Relative time amount"),
+    unit,
+  );
+}
+
+/** Retains original native option reads while sharing the relative-time formatter cache. */
+function relativeTimeFormatter(
+  language: string,
+  options: RelativeTimeFormatOptions,
+): Intl.RelativeTimeFormat {
   const tag = locale(options.language ?? language);
   return cachedFormatter(
     relativeTimeFormatters,
     nativeFormatterKey(tag, options),
     () => new Intl.RelativeTimeFormat(tag, options),
-  ).format(finiteNumber(value, "Relative time amount"), unit);
+  );
+}
+
+/**
+ * Formats a signed relative amount in an explicit unit as native structured parts.
+ * @param value - Finite amount; negative means past, positive means future, with native signed-zero semantics.
+ * @param unit - Native singular or plural unit; no date difference or automatic unit selection occurs.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Native options and locale override; defaults to long, numeric-always output.
+ * @returns Fresh, caller-owned mutable parts and records; literals may lack `unit`. No HTML is produced.
+ * @throws {RangeError} If the amount is nonfinite or the effective locale, unit, or options are invalid.
+ * @throws {TypeError} If Intl rejects coercion, or `Intl.RelativeTimeFormat.prototype.formatToParts`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatRelativeTimeToParts(
+  value: number,
+  unit: Intl.RelativeTimeFormatUnit,
+  language: string,
+  options: RelativeTimeFormatOptions = {},
+): Intl.RelativeTimeFormatPart[] {
+  const formatter = relativeTimeFormatter(language, options);
+  const number = finiteNumber(value, "Relative time amount");
+  if (typeof formatter.formatToParts !== "function") {
+    throw new TypeError(
+      "Intl.RelativeTimeFormat.prototype.formatToParts is unavailable; use a supporting runtime or consumer-provided polyfill",
+    );
+  }
+  return formatter.formatToParts(number, unit);
 }
 
 /**
@@ -346,6 +414,11 @@ export function formatCurrency(
   language: string,
   options: CurrencyFormatOptions,
 ): string {
+  return currencyFormatter(language, options).format(finiteNumber(value, "Currency amount"));
+}
+
+/** Validates and normalizes currency options once for all currency result forms. */
+function currencyFormatter(language: string, options: CurrencyFormatOptions): Intl.NumberFormat {
   if (!options || !/^[A-Za-z]{3}$/.test(options.currency)) {
     throw new RangeError("Currency must be a three-letter ISO 4217 code");
   }
@@ -360,7 +433,33 @@ export function formatCurrency(
     numberFormatters,
     formatterKey(tag, formatOptions),
     () => new Intl.NumberFormat(tag, formatOptions),
-  ).format(finiteNumber(value, "Currency amount"));
+  );
+}
+
+/**
+ * Formats a finite amount as native parts, forcing currency style and uppercasing the code.
+ * @param value - Finite currency amount; numeric strings and bigint are not accepted.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Required three-letter ASCII currency code, native number options, and locale override.
+ * Code syntax is validated, not registry membership; native currency defaults apply.
+ * @returns Fresh, caller-owned mutable parts and records in native order; no HTML is produced.
+ * @throws {RangeError} If the code is malformed, the amount is nonfinite, or locale/options are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.NumberFormat.prototype.formatToParts`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatCurrencyToParts(
+  value: number,
+  language: string,
+  options: CurrencyFormatOptions,
+): Intl.NumberFormatPart[] {
+  const formatter = currencyFormatter(language, options);
+  const number = finiteNumber(value, "Currency amount");
+  if (typeof formatter.formatToParts !== "function") {
+    throw new TypeError(
+      "Intl.NumberFormat.prototype.formatToParts is unavailable; use a supporting runtime or consumer-provided polyfill",
+    );
+  }
+  return formatter.formatToParts(number);
 }
 
 /**

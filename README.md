@@ -39,7 +39,8 @@ servers, workers, and command-line tools; browser integration is isolated in
 - **Locale-aware and deterministic.** Canonical BCP 47 language tags, ordered multiple fallback
   languages with progressive subtag fallback,
   configurable missing-value behavior, and strict `Intl` helpers for formatting, relative time,
-  and plural-category selection keep lookup and formatting rules explicit.
+  and plural-category selection keep lookup and formatting rules explicit. Number, currency, and
+  relative-time parts support consumer-controlled rendering without parsing formatted strings.
 - **Scoped UIs and synchronized language controls.** Bind a document or subtree, use independent
   translators for previews, and connect existing native selects or details dropdowns to an observable
   language registry. Direction synchronization is opt-in; styling and persistence stay application-owned.
@@ -68,8 +69,10 @@ servers, workers, and command-line tools; browser integration is isolated in
 - An ESM-capable application. The package does not provide a CommonJS build.
 - Node.js `22.13.0` or newer when running the package in Node.js.
 - An ES2022-capable runtime with the required `Intl` locale data.
-- TypeScript consumers can use the root declarations with `ES2022` alone, without DOM or Node
-  ambient types.
+- TypeScript consumers require `ES2023` libraries, or `ES2022` plus `ES2023.Intl`. The root
+  declarations need neither DOM nor Node ambient types. The emitted JavaScript target remains ES2022.
+- Parts calls require the corresponding native `Intl` `formatToParts` method. Missing methods produce
+  actionable call-time errors; the package does not install polyfills.
 - A browser DOM only when using `@unilarva/translator/dom`; the root entry has no DOM requirement.
 
 | Import                              | Purpose                                                            |

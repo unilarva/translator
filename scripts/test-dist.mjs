@@ -44,6 +44,59 @@ assert.equal(typeof dom.bindTranslator, "function");
 assert.equal(typeof dom.bindLanguageSelect, "function");
 assert.equal(typeof dom.bindLanguageDetails, "function");
 
+/** Checks public parts exports, locale overrides, and caller-owned native results. */
+function assertParts(api, translator) {
+  const rounding = {
+    maximumFractionDigits: 1,
+    roundingMode: "halfEven",
+    trailingZeroDisplay: "stripIfInteger",
+  };
+  const number = new Intl.NumberFormat("en", rounding).formatToParts(1234.25);
+  const currency = new Intl.NumberFormat("en", {
+    style: "currency",
+    currency: "EUR",
+    ...rounding,
+  }).formatToParts(1234.25);
+  const relative = new Intl.RelativeTimeFormat("en").formatToParts(-2, "day");
+  for (const [format, expected] of [
+    [() => api.formatNumberToParts(1234.25, "en", rounding), number],
+    [() => translator.formatNumberToParts(1234.25, rounding), number],
+    [() => api.formatCurrencyToParts(1234.25, "en", { currency: "eur", ...rounding }), currency],
+    [() => translator.formatCurrencyToParts(1234.25, { currency: "eur", ...rounding }), currency],
+    [() => api.formatRelativeTimeToParts(-2, "day", "en"), relative],
+    [() => translator.formatRelativeTimeToParts(-2, "day"), relative],
+  ]) {
+    const first = format();
+    const second = format();
+    assert.deepEqual(first, expected);
+    assert.deepEqual(second, expected);
+    assert.notStrictEqual(first, second);
+    assert.equal(Object.isFrozen(first), false);
+    for (let index = 0; index < first.length; index++) {
+      assert.notStrictEqual(first[index], second[index]);
+      assert.equal(Object.isFrozen(first[index]), false);
+      first[index].value = "consumer mutation";
+    }
+    first.length = 0;
+    assert.deepEqual(format(), expected);
+    assert.deepEqual(second, expected);
+  }
+  assert.deepEqual(
+    translator.formatNumberToParts(1.25, { language: "fi", ...rounding }),
+    new Intl.NumberFormat("fi", rounding).formatToParts(1.25),
+  );
+  assert.deepEqual(
+    translator.formatCurrencyToParts(1.25, { language: "fi", currency: "EUR" }),
+    new Intl.NumberFormat("fi", { style: "currency", currency: "EUR" }).formatToParts(1.25),
+  );
+  assert.deepEqual(
+    translator.formatRelativeTimeToParts(0, "day", { language: "fi", numeric: "auto" }),
+    new Intl.RelativeTimeFormat("fi", { numeric: "auto" }).formatToParts(0, "day"),
+  );
+}
+
+assertParts(core, translator);
+
 const typescriptManifest = fileURLToPath(import.meta.resolve("typescript/package.json"));
 const typescript = resolve(dirname(typescriptManifest), "bin/tsc");
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
@@ -98,6 +151,7 @@ try {
       "--eval",
       `
       import assert from "node:assert/strict";
+      import * as core from "@unilarva/translator";
       import { createTypedTranslate, Translator, formatRelativeTime, selectPlural } from "@unilarva/translator";
       import { bindTranslator, bindLanguageSelect, bindLanguageDetails } from "@unilarva/translator/dom";
       const translator = new Translator({ language: "en" });
@@ -105,6 +159,7 @@ try {
       assert.equal(selectPlural(2, "en", { type: "ordinal" }), "two");
       assert.equal(translator.formatRelativeTime(0, "day", { numeric: "auto" }), "today");
       assert.equal(translator.selectPlural(1), "one");
+      (${assertParts.toString()})(core, translator);
       const catalogEvents = [];
       const unsubscribeCatalog = translator.subscribeCatalog(event => catalogEvents.push(event));
       translator.setTranslation("smoke", { en: "Installed package" });
@@ -153,9 +208,9 @@ try {
   for (const [name, lib, source] of [
     [
       "core",
-      ["ES2022"],
+      ["ES2023"],
       `
-      import { Translator, formatDate, formatRelativeTime, selectPlural, parseRichText, type RelativeTimeFormatOptions, type PluralSelectOptions, type TranslationBundle, type TranslationCatalogChangeEvent, type TranslatorCopyOptions } from "@unilarva/translator";
+      import { Translator, formatDate, formatRelativeTime, formatNumberToParts, formatCurrencyToParts, formatRelativeTimeToParts, selectPlural, parseRichText, type RelativeTimeFormatOptions, type PluralSelectOptions, type TranslationBundle, type TranslationCatalogChangeEvent, type TranslatorCopyOptions } from "@unilarva/translator";
       const bundle: TranslationBundle = { "translator-i18n": { "language-data": { en: { greeting: "Hello" } } } };
       const translator = new Translator({ language: "en" });
       const unsubscribeCatalog = translator.subscribeCatalog((event: TranslationCatalogChangeEvent) => {
@@ -192,6 +247,44 @@ try {
       const category: Intl.LDMLPluralRule = selectPlural(2, "en", pluralOptions);
       const methodCategory: Intl.LDMLPluralRule = translator.selectPlural(2, pluralOptions);
       translator.formatRelativeTime(1, "weeks", relativeOptions);
+      const rounding: Intl.NumberFormatOptions = {
+        roundingMode: "halfEven", roundingPriority: "morePrecision",
+        roundingIncrement: 1, trailingZeroDisplay: "stripIfInteger",
+      };
+      const numberParts: Intl.NumberFormatPart[] = formatNumberToParts(1.25, "en", rounding);
+      const currencyParts: Intl.NumberFormatPart[] = formatCurrencyToParts(1.25, "en", { ...rounding, currency: "EUR" });
+      const relativeParts: Intl.RelativeTimeFormatPart[] = formatRelativeTimeToParts(-1, "day", "en", relativeOptions);
+      const methodNumberParts: Intl.NumberFormatPart[] = translator.formatNumberToParts(1.25, { ...rounding, language: "fi" });
+      const methodCurrencyParts: Intl.NumberFormatPart[] = translator.formatCurrencyToParts(1.25, { currency: "EUR" });
+      const methodRelativeParts: Intl.RelativeTimeFormatPart[] = translator.formatRelativeTimeToParts(1, "weeks", relativeOptions);
+      for (const part of relativeParts) {
+        if (part.type !== "literal") {
+          const unit: Intl.RelativeTimeFormatUnitSingular = part.unit;
+        } else {
+          // @ts-expect-error Native literal parts do not carry units.
+          part.unit;
+        }
+      }
+      // @ts-expect-error Numeric strings are not coerced.
+      formatNumberToParts("1", "en");
+      // @ts-expect-error Bigints remain unsupported.
+      translator.formatNumberToParts(1n);
+      // @ts-expect-error Currency options are required.
+      formatCurrencyToParts(1, "en");
+      // @ts-expect-error Currency methods require a code.
+      translator.formatCurrencyToParts(1, {});
+      // @ts-expect-error Currency parts do not accept bigint.
+      formatCurrencyToParts(1n, "en", { currency: "EUR" });
+      // @ts-expect-error Relative values do not accept numeric strings.
+      formatRelativeTimeToParts("1", "day", "en");
+      // @ts-expect-error Relative units remain a native union.
+      translator.formatRelativeTimeToParts(1, "fortnight");
+      // @ts-expect-error Parts are not formatted strings.
+      const wrongNumberParts: string = translator.formatNumberToParts(1);
+      // @ts-expect-error Currency parts are not formatted strings.
+      const wrongCurrencyParts: string = formatCurrencyToParts(1, "en", { currency: "EUR" });
+      // @ts-expect-error Relative parts are not formatted strings.
+      const wrongRelativeParts: string = formatRelativeTimeToParts(1, "day", "en");
       // @ts-expect-error Relative time requires a native unit name.
       formatRelativeTime(1, "fortnight", "en");
       // @ts-expect-error Plural categories are a union, not arbitrary strings.
@@ -205,7 +298,7 @@ try {
     ],
     [
       "typed-lookup",
-      ["ES2022"],
+      ["ES2023"],
       `
       import { createTypedTranslate, Translator, type MultilingualData, type TranslateOptions } from "@unilarva/translator";
       const translator = new Translator();
@@ -263,7 +356,7 @@ try {
     ],
     [
       "usage-typed-keys",
-      ["ES2022"],
+      ["ES2023"],
       `
       declare const console: { warn(...values: unknown[]): void };
       ${typedSnippet}
@@ -271,7 +364,7 @@ try {
     ],
     [
       "dom",
-      ["ES2022", "DOM", "DOM.Iterable"],
+      ["ES2023", "DOM", "DOM.Iterable"],
       `
       import { Translator } from "@unilarva/translator";
       import { bindTranslator, bindLanguageSelect, bindLanguageDetails } from "@unilarva/translator/dom";
@@ -286,7 +379,7 @@ try {
     ],
     [
       "usage-fragment",
-      ["ES2022", "DOM", "DOM.Iterable"],
+      ["ES2023", "DOM", "DOM.Iterable"],
       `
       import { Translator } from "@unilarva/translator";
       import { bindTranslator } from "@unilarva/translator/dom";

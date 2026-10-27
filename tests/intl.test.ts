@@ -15,7 +15,11 @@ import { Window } from "happy-dom";
 
 import {
   Translator,
+  formatCurrencyToParts,
+  formatNumberToParts,
   formatRelativeTime,
+  formatRelativeTimeToParts,
+  type NumberFormatOptions,
   selectPlural,
   type PluralSelectOptions,
   type RelativeTimeFormatOptions,
@@ -32,6 +36,378 @@ import {
   type TimeFormatOptions,
 } from "../src/intl.ts";
 import { asElement, asParentNode } from "./dom-test-utils.ts";
+
+test("number and currency parts preserve native output and newly typed rounding options", () => {
+  const choices: NumberFormatOptions[] = [
+    {},
+    { notation: "compact" },
+    { style: "percent", signDisplay: "always" },
+    { style: "unit", unit: "kilometer", unitDisplay: "long" },
+    { maximumFractionDigits: 0, roundingMode: "halfEven", useGrouping: "min2" },
+    { minimumFractionDigits: 2, maximumFractionDigits: 2, roundingIncrement: 5 },
+    { minimumFractionDigits: 2, trailingZeroDisplay: "stripIfInteger" },
+    { maximumFractionDigits: 1, maximumSignificantDigits: 2, roundingPriority: "morePrecision" },
+  ];
+  for (const language of ["en-x-parts-native", "fi-x-parts-native", "ar-x-parts-native"]) {
+    for (const options of choices) {
+      const currencyOptions = { ...options, currency: "eur" };
+      const nativeNumber = new Intl.NumberFormat(language, options);
+      const nativeCurrency = new Intl.NumberFormat(language, {
+        ...options,
+        style: "currency",
+        currency: "EUR",
+      });
+      for (const value of [-1234.5, -0, 0, 2.5, 1234.567]) {
+        assert.deepEqual(
+          formatNumberToParts(value, language, options),
+          nativeNumber.formatToParts(value),
+        );
+        assert.deepEqual(
+          formatCurrencyToParts(value, language, currencyOptions),
+          nativeCurrency.formatToParts(value),
+        );
+        assert.equal(formatNumber(value, language, options), nativeNumber.format(value));
+        assert.equal(
+          formatCurrency(value, language, currencyOptions),
+          nativeCurrency.format(value),
+        );
+      }
+    }
+  }
+  assert.deepEqual(
+    formatCurrencyToParts(1, "en", { currency: "zzz" }),
+    new Intl.NumberFormat("en", { currency: "ZZZ", style: "currency" }).formatToParts(1),
+  );
+});
+
+test("relative-time parts preserve native literal/unit structure, units and signed amounts", () => {
+  const units: Intl.RelativeTimeFormatUnit[] = [
+    "year",
+    "quarters",
+    "month",
+    "weeks",
+    "day",
+    "hours",
+    "minute",
+    "seconds",
+  ];
+  const choices: RelativeTimeFormatOptions[] = [
+    {},
+    { numeric: "auto" },
+    { style: "short" },
+    { style: "narrow", numeric: "auto" },
+  ];
+  for (const language of ["en", "fi", "ar"]) {
+    for (const options of choices) {
+      const native = new Intl.RelativeTimeFormat(language, options);
+      for (const unit of units) {
+        for (const value of [-2, -0, 0, 1, 1.5]) {
+          assert.deepEqual(
+            formatRelativeTimeToParts(value, unit, language, options),
+            native.formatToParts(value, unit),
+          );
+        }
+      }
+    }
+  }
+  const literal = formatRelativeTimeToParts(-1, "day", "en", { numeric: "auto" });
+  assert.deepEqual(literal, [{ type: "literal", value: "yesterday" }]);
+  assert.equal("unit" in literal[0], false);
+});
+
+test("parts methods resolve active and explicit locales without changing state or caller options", () => {
+  const translator = new Translator({ language: "en-x-methods", fallbackLanguage: "ar" });
+  translator.setTranslation("item", { ar: "Fallback only" });
+  let notifications = 0;
+  translator.subscribe(() => notifications++);
+  translator.subscribeCatalog(() => notifications++);
+  translator.subscribeLanguages(() => notifications++);
+  for (const language of ["en-x-methods", "fi-x-methods"]) {
+    translator.setLanguage(language);
+    assert.deepEqual(
+      translator.formatNumberToParts(1234.5),
+      new Intl.NumberFormat(language).formatToParts(1234.5),
+    );
+    assert.deepEqual(
+      translator.formatCurrencyToParts(12, { currency: "eur" }),
+      new Intl.NumberFormat(language, { style: "currency", currency: "EUR" }).formatToParts(12),
+    );
+    assert.deepEqual(
+      translator.formatRelativeTimeToParts(-2, "days"),
+      new Intl.RelativeTimeFormat(language).formatToParts(-2, "days"),
+    );
+  }
+  const numberOptions = Object.freeze({ language: " en_GB ", maximumFractionDigits: 1 });
+  const currencyOptions = Object.freeze({
+    language: " en_GB ",
+    currency: "eur",
+    style: "percent" as const,
+  });
+  const relativeOptions = Object.freeze({ language: " en_GB ", numeric: "auto" as const });
+  assert.deepEqual(
+    translator.formatNumberToParts(1.25, numberOptions),
+    formatNumberToParts(1.25, "!invalid!", numberOptions),
+  );
+  assert.deepEqual(
+    translator.formatCurrencyToParts(12, currencyOptions),
+    formatCurrencyToParts(12, "!invalid!", currencyOptions),
+  );
+  assert.deepEqual(
+    translator.formatRelativeTimeToParts(-1, "day", relativeOptions),
+    formatRelativeTimeToParts(-1, "day", "!invalid!", relativeOptions),
+  );
+  assert.equal(translator.getLanguage(), "fi-x-methods");
+  assert.equal(translator.translateKey("item"), "Fallback only");
+  assert.equal(notifications, 1);
+  assert.equal(currencyOptions.currency, "eur");
+  assert.equal(currencyOptions.style, "percent");
+});
+
+test("parts arrays and records are fresh, mutable caller-owned results", () => {
+  const translator = new Translator({ language: "en" });
+  for (const parts of [
+    () => formatNumberToParts(1234.5, "en"),
+    () => formatCurrencyToParts(1234.5, "en", { currency: "EUR" }),
+    () => formatRelativeTimeToParts(-2, "days", "en"),
+    () => translator.formatNumberToParts(1234.5),
+    () => translator.formatCurrencyToParts(1234.5, { currency: "EUR" }),
+    () => translator.formatRelativeTimeToParts(-2, "days"),
+  ]) {
+    const first = parts();
+    const second = parts();
+    assert.deepEqual(first, second);
+    assert.notEqual(first, second);
+    assert.notEqual(first[0], second[0]);
+    first[0].value = "changed";
+    first.splice(0);
+    assert.deepEqual(parts(), second);
+  }
+});
+
+test("parts reject invalid numeric values, currencies, locales, units and options", () => {
+  const object = {
+    valueOf() {
+      throw new Error("Must not coerce input");
+    },
+  };
+  for (const value of [NaN, Infinity, -Infinity, "1", null, undefined, 1n, object]) {
+    assert.throws(() => formatNumberToParts(value as number, "en"), RangeError);
+    assert.throws(
+      () => formatCurrencyToParts(value as number, "en", { currency: "EUR" }),
+      RangeError,
+    );
+    assert.throws(() => formatRelativeTimeToParts(value as number, "day", "en"), RangeError);
+  }
+  for (const language of ["", " ", "invalid_!"]) {
+    assert.throws(() => formatNumberToParts(1, language), RangeError);
+    assert.throws(() => formatCurrencyToParts(1, language, { currency: "EUR" }), RangeError);
+    assert.throws(() => formatRelativeTimeToParts(1, "day", language), RangeError);
+  }
+  for (const currency of ["EU", "EURO", "€€€", " E "]) {
+    assert.throws(() => formatCurrencyToParts(1, "en", { currency }), RangeError);
+  }
+  // @ts-expect-error Currency options are required.
+  assert.throws(() => formatCurrencyToParts(1, "en"), RangeError);
+  assert.throws(() => formatNumberToParts(1, "en", { minimumFractionDigits: -1 }), RangeError);
+  assert.throws(
+    () => formatCurrencyToParts(1, "en", { currency: "EUR", maximumFractionDigits: -1 }),
+    RangeError,
+  );
+  // @ts-expect-error Native unit names only.
+  assert.throws(() => formatRelativeTimeToParts(1, "fortnight", "en"), RangeError);
+  assert.throws(
+    // @ts-expect-error Native numeric modes only.
+    () => formatRelativeTimeToParts(1, "day", "en", { numeric: "sometimes" }),
+    RangeError,
+  );
+});
+
+test("parts diagnostics preserve error identity and stable events despite logger failures", () => {
+  const entries: TranslatorLogEntry[] = [];
+  const translator = new Translator({
+    language: "fi",
+    logger(entry) {
+      entries.push(entry);
+      throw new Error("Logger failed");
+    },
+  });
+  const error = new Error("Option coercion failed");
+  const dynamic = {
+    toString() {
+      throw error;
+    },
+  };
+  const number = { style: dynamic as unknown as "decimal" };
+  const currency = { currency: "EUR", currencyDisplay: dynamic as unknown as "symbol" };
+  const relative = { numeric: dynamic as unknown as "auto" };
+  for (const call of [
+    () => translator.formatNumberToParts(1, number),
+    () => translator.formatCurrencyToParts(1, currency),
+    () => translator.formatRelativeTimeToParts(1, "day", relative),
+    () => formatNumberToParts(1, "en", number),
+    () => formatCurrencyToParts(1, "en", currency),
+    () => formatRelativeTimeToParts(1, "day", "en", relative),
+  ])
+    assert.throws(call, thrown => thrown === error);
+  assert.deepEqual(
+    entries.map(entry => [entry.component, entry.event, entry.error, entry.details]),
+    [
+      ["intl", "number-format-to-parts-failed", error, { language: "fi" }],
+      ["intl", "currency-format-to-parts-failed", error, { language: "fi" }],
+      ["intl", "relative-time-format-to-parts-failed", error, { language: "fi" }],
+    ],
+  );
+});
+
+test("parts share string caches while preserving option-read and coercion contracts", t => {
+  const NumberFormatter = Intl.NumberFormat;
+  const Relative = Intl.RelativeTimeFormat;
+  let numbers = 0;
+  let relatives = 0;
+  t.mock.method(
+    Intl,
+    "NumberFormat",
+    function (...args: ConstructorParameters<typeof NumberFormatter>) {
+      numbers++;
+      return new NumberFormatter(...args);
+    },
+  );
+  t.mock.method(
+    Intl,
+    "RelativeTimeFormat",
+    function (...args: ConstructorParameters<typeof Relative>) {
+      relatives++;
+      return new Relative(...args);
+    },
+  );
+  formatNumber(1, "en-x-parts", { minimumFractionDigits: 2 });
+  formatNumberToParts(2, "EN_x_parts", { minimumFractionDigits: 2 });
+  formatCurrency(1, "en-x-parts", { currency: "eur" });
+  formatCurrencyToParts(2, "en-x-parts", { currency: "EUR" });
+  formatNumberToParts(3, "en-x-parts", { currency: "EUR", style: "currency" });
+  formatRelativeTime(1, "day", "en-x-parts", { numeric: "auto" });
+  formatRelativeTimeToParts(2, "hours", "EN_x_parts", { numeric: "auto" });
+  assert.equal(numbers, 2);
+  assert.equal(relatives, 1);
+
+  let reads = 0;
+  const numberOptions = {
+    get minimumFractionDigits() {
+      reads++;
+      return 1;
+    },
+  };
+  formatNumber(1, "en-x-reads", numberOptions);
+  formatNumberToParts(2, "en-x-reads", numberOptions);
+  assert.equal(reads, 2);
+  let numeric: "auto" | "always" = "auto";
+  const relativeOptions = Object.create({
+    get numeric() {
+      return numeric;
+    },
+  });
+  Object.defineProperty(relativeOptions, "ignoredOption", {
+    enumerable: true,
+    get() {
+      throw new Error("Unknown getters must not run");
+    },
+  });
+  assert.deepEqual(
+    formatRelativeTimeToParts(0, "day", "en", relativeOptions),
+    new Relative("en", { numeric: "auto" }).formatToParts(0, "day"),
+  );
+  numeric = "always";
+  assert.deepEqual(
+    formatRelativeTimeToParts(0, "day", "en", relativeOptions),
+    new Relative("en", { numeric: "always" }).formatToParts(0, "day"),
+  );
+  const nonEnumerable = Object.defineProperty({}, "numeric", { value: "auto" });
+  assert.deepEqual(
+    formatRelativeTimeToParts(0, "day", "en", nonEnumerable),
+    new Relative("en", { numeric: "auto" }).formatToParts(0, "day"),
+  );
+  let coercions = 0;
+  const digits = { valueOf: () => ++coercions };
+  const dynamicNumber = { minimumFractionDigits: digits as unknown as number };
+  formatNumber(1, "en-x-coerce", dynamicNumber);
+  formatNumberToParts(1, "en-x-coerce", dynamicNumber);
+  assert.equal(coercions, 2);
+  coercions = 0;
+  const dynamicRelative = {
+    numeric: { toString: () => (++coercions === 1 ? "auto" : "always") } as unknown as "auto",
+  };
+  assert.notDeepEqual(
+    formatRelativeTime(0, "day", "en", dynamicRelative),
+    formatRelativeTimeToParts(0, "day", "en", dynamicRelative)
+      .map(part => part.value)
+      .join(""),
+  );
+  assert.equal(coercions, 2);
+});
+
+test("missing parts methods fail only on request with actionable diagnostics", async t => {
+  const NumberFormatter = Intl.NumberFormat;
+  const Relative = Intl.RelativeTimeFormat;
+  const entries: TranslatorLogEntry[] = [];
+  const translator = new Translator({ logger: entry => entries.push(entry) });
+  const numberDescriptor = Object.getOwnPropertyDescriptor(
+    NumberFormatter.prototype,
+    "formatToParts",
+  )!;
+  const relativeDescriptor = Object.getOwnPropertyDescriptor(Relative.prototype, "formatToParts")!;
+  t.after(() => {
+    Object.defineProperty(NumberFormatter.prototype, "formatToParts", numberDescriptor);
+    Object.defineProperty(Relative.prototype, "formatToParts", relativeDescriptor);
+  });
+  Object.defineProperty(NumberFormatter.prototype, "formatToParts", {
+    ...numberDescriptor,
+    value: undefined,
+  });
+  const modulePath = "../src/intl.ts?missing-number-parts";
+  const imported = await import(modulePath);
+  assert.equal(imported.formatNumber(1, "en"), "1");
+  for (const call of [
+    () => formatNumberToParts(1, "en"),
+    () => formatCurrencyToParts(1, "en", { currency: "EUR" }),
+    () => translator.formatNumberToParts(1),
+    () => translator.formatCurrencyToParts(1, { currency: "EUR" }),
+  ])
+    assert.throws(call, {
+      name: "TypeError",
+      message: /Intl\.NumberFormat\.prototype\.formatToParts.*supporting runtime.*polyfill/,
+    });
+  assert.equal(formatNumber(1, "en"), "1");
+  assert.equal(typeof formatCurrency(1, "en", { currency: "EUR" }), "string");
+  assert.deepEqual(
+    formatRelativeTimeToParts(1, "day", "en"),
+    new Relative("en").formatToParts(1, "day"),
+  );
+  Object.defineProperty(NumberFormatter.prototype, "formatToParts", numberDescriptor);
+  Object.defineProperty(Relative.prototype, "formatToParts", {
+    ...relativeDescriptor,
+    value: undefined,
+  });
+  for (const call of [
+    () => formatRelativeTimeToParts(1, "day", "en"),
+    () => translator.formatRelativeTimeToParts(1, "day"),
+  ])
+    assert.throws(call, {
+      name: "TypeError",
+      message: /Intl\.RelativeTimeFormat\.prototype\.formatToParts.*supporting runtime.*polyfill/,
+    });
+  assert.deepEqual(formatNumberToParts(1, "en"), new NumberFormatter("en").formatToParts(1));
+  assert.equal(typeof formatRelativeTime(1, "day", "en"), "string");
+  assert.equal(typeof formatDate("2026-10-27", "en"), "string");
+  assert.deepEqual(
+    entries.map(entry => entry.event),
+    [
+      "number-format-to-parts-failed",
+      "currency-format-to-parts-failed",
+      "relative-time-format-to-parts-failed",
+    ],
+  );
+  assert.ok(entries.every(entry => entry.error instanceof TypeError));
+});
 
 test("relative time retains native units, signed amounts, options, and locale output", () => {
   const units: Intl.RelativeTimeFormatUnit[] = [

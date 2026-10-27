@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add DOM-free `formatNumberToParts()`, `formatCurrencyToParts()`, and `formatRelativeTimeToParts()`
+  helpers and matching Translator methods. Results are fresh, mutable, caller-owned native parts
+  arrays and records, retaining existing strict inputs, locale overrides, and native defaults;
+  relative-time literal parts may lack `unit`. Methods log original failures with operation-specific
+  events before rethrowing the same error; standalone helpers throw without logging. Missing native
+  `formatToParts` methods produce actionable call-time `TypeError`s without breaking imports or
+  unrelated formatting. No HTML, DOM markers, or runtime dependencies are added.
+- Require TypeScript `ES2023` libraries, or `ES2022` plus `ES2023.Intl`, instead of ES2022 alone.
+  Root declarations remain usable without DOM or Node ambient types. The emitted JavaScript target
+  stays ES2022 and the Node minimum stays `22.13.0`; newer declarations do not supply runtime polyfills.
+
 ## 0.3.0 - 2026-10-05
 
 - Add ordered multiple fallback languages through `TranslatorOptions.additionalFallbackLanguages`

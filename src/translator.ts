@@ -38,9 +38,12 @@ import { emitTranslatorLog, observeCallbackResult } from "./logging.js";
 import { interpolate } from "./interpolation.js";
 import {
   formatCurrency as formatCurrencyValue,
+  formatCurrencyToParts as formatCurrencyParts,
   formatDate as formatDateValue,
   formatNumber as formatNumberValue,
+  formatNumberToParts as formatNumberParts,
   formatRelativeTime as formatRelativeTimeValue,
+  formatRelativeTimeToParts as formatRelativeTimeParts,
   formatTime as formatTimeValue,
   formatWeekday as formatWeekdayValue,
   selectPlural as selectPluralValue,
@@ -1097,6 +1100,24 @@ export class Translator {
   }
 
   /**
+   * Formats number parts using the active language unless `options.language` overrides it.
+   * @param value - Finite number, without numeric coercion.
+   * @param options - Native number options and locale override; defaults to Intl defaults.
+   * @returns Fresh, caller-owned mutable native parts and records, not HTML.
+   * @throws RangeError for invalid input/locale/options; TypeError for native option errors or
+   * missing Intl.NumberFormat formatToParts support (requires a supporting runtime or polyfill).
+   * Failures are logged and the original error is rethrown.
+   */
+  public formatNumberToParts(
+    value: number,
+    options: NumberFormatOptions = {},
+  ): Intl.NumberFormatPart[] {
+    return this.#format("number-format-to-parts-failed", () =>
+      formatNumberParts(value, this.#language, options),
+    );
+  }
+
+  /**
    * Formats a signed relative amount in an explicit unit using the active language unless overridden.
    * @param value - Finite amount; negative means past and positive means future.
    * @param unit - Native singular or plural relative-time unit; no automatic unit selection occurs.
@@ -1111,6 +1132,26 @@ export class Translator {
   ): string {
     return this.#format("relative-time-format-failed", () =>
       formatRelativeTimeValue(value, unit, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats relative-time parts using the active language unless `options.language` overrides it.
+   * @param value - Finite signed amount; negative means past and positive means future.
+   * @param unit - Native singular or plural unit; no automatic unit or date-difference calculation.
+   * @param options - Native options and locale override; defaults to long/numeric-always.
+   * @returns Fresh, caller-owned mutable native parts and records; literals may lack `unit`. Not HTML.
+   * @throws RangeError for invalid input/locale/unit/options; TypeError for native coercion errors or
+   * missing Intl.RelativeTimeFormat formatToParts support (requires a supporting runtime or polyfill).
+   * Failures are logged and the original error is rethrown.
+   */
+  public formatRelativeTimeToParts(
+    value: number,
+    unit: Intl.RelativeTimeFormatUnit,
+    options: RelativeTimeFormatOptions = {},
+  ): Intl.RelativeTimeFormatPart[] {
+    return this.#format("relative-time-format-to-parts-failed", () =>
+      formatRelativeTimeParts(value, unit, this.#language, options),
     );
   }
 
@@ -1137,6 +1178,25 @@ export class Translator {
   public formatCurrency(value: number, options: CurrencyFormatOptions): string {
     return this.#format("currency-format-failed", () =>
       formatCurrencyValue(value, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats currency parts using the active language unless `options.language` overrides it.
+   * @param value - Finite currency amount, without numeric coercion.
+   * @param options - Required three-letter ASCII code (uppercased), native options, and locale override.
+   * Currency style is forced and native currency defaults apply; code existence is not checked.
+   * @returns Fresh, caller-owned mutable native parts and records, not HTML.
+   * @throws RangeError for invalid input/code/locale/options; TypeError for native option errors or
+   * missing Intl.NumberFormat formatToParts support (requires a supporting runtime or polyfill).
+   * Failures are logged and the original error is rethrown.
+   */
+  public formatCurrencyToParts(
+    value: number,
+    options: CurrencyFormatOptions,
+  ): Intl.NumberFormatPart[] {
+    return this.#format("currency-format-to-parts-failed", () =>
+      formatCurrencyParts(value, this.#language, options),
     );
   }
 
@@ -1457,7 +1517,7 @@ export class Translator {
   }
 
   /** Runs a locale formatter, logging failures before rethrowing the original error. */
-  #format<T extends string>(event: string, format: () => T): T {
+  #format<T>(event: string, format: () => T): T {
     try {
       return format();
     } catch (error) {

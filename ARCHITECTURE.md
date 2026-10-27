@@ -77,9 +77,12 @@ The package exposes two library entry points and one metadata subpath:
 | `@unilarva/translator/dom`          | `src/dom.ts`   | DOM binding and built-in DOM extensions.            |
 | `@unilarva/translator/package.json` | `package.json` | Tooling-readable package metadata.                  |
 
-The root entry's emitted declaration must remain usable with TypeScript's `ES2022` library and no
-DOM library. Do not export browser-native request or DOM types from it. DOM-dependent APIs and
-types belong in `src/dom.ts` or modules reachable only through that entry.
+The root entry's emitted declaration requires TypeScript's `ES2023` library, or `ES2022` plus
+`ES2023.Intl`, and must remain usable without DOM or Node ambient declarations. The JavaScript target
+remains ES2022 and the Node minimum remains `22.13.0`; declaration availability does not imply host
+Intl support. Do not export browser-native request or DOM types from the root. DOM-dependent APIs
+and types belong in `src/dom.ts` or modules reachable only through that entry. Keep declaration
+checking strict rather than hiding missing Intl types with `any`, `skipLibCheck`, or global augmentation.
 
 The `exports` map is the package boundary. Source files and individual generated `dist/` modules
 are internal even when their JavaScript happens to be present in the tarball.
@@ -154,6 +157,22 @@ not catalog fallback. Do not add automatic unit selection, date differences, clo
 message compilation, runtime dependencies, or DOM markers for these helpers. Consumers selecting
 message keys from categories must align the rule language with the resolved message language;
 ordinary translation fallback does not guarantee that alignment.
+
+`formatNumberToParts()`, `formatCurrencyToParts()`, and `formatRelativeTimeToParts()` expose native
+`formatToParts` results through root exports and matching Translator methods. Reuse existing
+family-specific option types, strict finite-number validation, locale/default rules, currency style
+and uppercase code normalization. Preserve native relative-time unit/option reads rather than
+homogenizing them with number option snapshots. Share bounded formatter caches with string calls
+when effective options match; cache neither inputs nor results. Arrays and their records are fresh,
+mutable, caller-owned native results, not frozen snapshots. Preserve native order and literals;
+relative-time literal parts may lack `unit`. Do not tokenize strings, generate HTML, claim safe HTML,
+or add DOM markers. Existing string methods retain their return types.
+
+Check the requested native `formatToParts` method only at call time, never during module import.
+A missing method throws an actionable `TypeError` naming the method and requiring a supporting host
+or consumer-provided polyfill. Do not install polyfills or add string fallbacks; unsupported methods
+must not break imports or unrelated operations. Formatting uses active/explicit locales, never catalog
+fallback, and does not change translator settings or emit language, catalog, or registry events.
 
 ### `src/rich-text.ts`
 
@@ -451,6 +470,10 @@ extras. Preserve the previous details shape when extras are absent.
 
 Translator relative-time and plural-selection methods log `relative-time-format-failed` and
 `plural-select-failed`, respectively, with the original error, then rethrow that same error.
+Parts methods use `number-format-to-parts-failed`, `currency-format-to-parts-failed`, and
+`relative-time-format-to-parts-failed`. Standalone helpers throw without logging; methods use the
+safe adapter and rethrow the identical error, including option-coercion and missing-native-method
+failures. Preserve existing diagnostic events and detail shapes for string methods.
 
 Subscriber and logger callbacks run synchronously and are never awaited. Observe accidental returned
 promises/thenables through native promise assimilation: subscriber rejections emit ordinary failure
@@ -475,7 +498,10 @@ Tests use Node's test runner through `tsx` and Happy DOM for browser-shaped beha
   verification failure scenarios.
 - `scripts/test-dist.mjs`: built ESM smoke test, actual packed-file inspection, clean-tarball
   installation, runtime export-boundary checks, and strict core/DOM consumer typechecks. The core
-  fixture uses only `ES2022` and `types: []`, with neither DOM nor Node ambient declarations.
+  fixture uses `ES2023` and `types: []`, with neither DOM nor Node ambient declarations. Also verify
+  the narrower `ES2022` plus `ES2023.Intl` consumer configuration. Compare parts to their native
+  operation, and cover fresh mutable ownership, defaults, strict inputs, locale overrides, shared
+  cache/coercion behavior, error identity, and call-time missing-method diagnostics.
 
 Tests that deliberately model hostile or malformed input are contract tests, not incidental edge
 cases. Preserve them when refactoring parsing or rendering.
@@ -557,7 +583,7 @@ points rather than changing current return types, event semantics, grammar, or c
 
 | Order | Candidate                           | Importance / implementation gate                  | Complexity  | Public contract addition                  |
 | ----- | ----------------------------------- | ------------------------------------------------- | ----------- | ----------------------------------------- |
-| 1     | Intl formatting parts               | Broadly useful, natural native extension          | Low-medium  | Helpers, methods, and parts types         |
+| 1     | Remaining Intl formatting parts     | Date, clock-time, and weekday follow-up           | Low-medium  | Helpers, methods, and native parts types  |
 | 2     | Intl formatting ranges              | Natural follow-up; can ship separately            | Medium      | Range inputs, results, runtime support    |
 | 3     | Inserted markup observation         | High for dynamic imperative DOM when needed       | Medium-high | Opt-in scheduling and binding lifecycle   |
 | 4     | JSON-to-key declaration generation  | When external JSON makes typed keys inconvenient  | Medium      | Separate tooling inputs and output        |
@@ -570,13 +596,13 @@ points rather than changing current return types, event semantics, grammar, or c
 
 ### Intl Formatting Parts
 
-Add named helpers and matching Translator methods that expose native structured parts for
-consumer-controlled rendering without parsing formatted strings. Keep existing methods string-returning.
-Specify parts types, ownership, and supported formatter families. Preserve calendar/clock/instant
-distinctions, locale-data dependence, and bounded-cache/coercion behavior; clock parts must never expose
-their synthetic date or zone. Keep the root DOM-free; any newer TypeScript library baseline must be
-documented and verified with isolated consumer declarations. Parts are not HTML: consumers still own
-safe rendering. Add DOM markers only when a consumer needs them.
+Number, currency, and relative-time parts are available. Date, clock-time, and weekday parts remain
+unimplemented: add named helpers and matching Translator methods returning native
+`Intl.DateTimeFormatPart[]` without changing existing string return types. Preserve fresh mutable
+ownership, calendar/clock/instant distinctions, locale-data dependence, and bounded-cache/coercion
+behavior; clock parts must never expose their synthetic date or zone. Retain the documented ES2023
+Intl declaration baseline, DOM/Node-ambient-free root, and call-time capability diagnostics. Parts
+are not HTML: consumers still own safe rendering. No DOM markers are planned.
 
 ### Intl Formatting Ranges
 
@@ -585,10 +611,9 @@ Translator methods for the native formatter families that support ranges. Define
 calendar-versus-instant compatibility, clock ordering, range-part source metadata, and native
 range/runtime availability. Preserve existing single-value defaults, finite-number constraints,
 calendar/clock/instant distinctions, and cache/coercion behavior. Do not manufacture localized ranges
-by joining two formatted strings. A newer TypeScript Intl library baseline is acceptable, but is a
-consumer-contract change: update requirements and isolated declaration tests together rather than
-silently requiring newer libraries. Unsupported hosts need a clear call-time error, not an import-time
-failure or an implicit polyfill.
+by joining two formatted strings. All range APIs remain unimplemented. Use native range types under
+the documented ES2023 Intl declaration baseline and verify isolated consumer declarations.
+Unsupported hosts need a clear call-time error, not an import-time failure or an implicit polyfill.
 
 ### Inserted Markup Observation
 

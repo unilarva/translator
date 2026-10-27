@@ -2,33 +2,16 @@
 
 ## Unreleased
 
-- Add DOM-free `formatNumberRange()`, `formatNumberRangeToParts()`, `formatCurrencyRange()`, and
-  `formatCurrencyRangeToParts()` helpers and matching Translator methods. Reuse family options,
-  defaults, and formatter caches with finite number endpoints only, without coercion. Preserve native
-  descending ranges, signed zero, equal/rounded approximation, and shared affixes. Range parts are
-  fresh mutable `Intl.NumberRangeFormatPart[]` and records, retaining native `source` metadata and
-  `approximatelySign`. Methods log original failures with operation-specific range events before
-  rethrowing the identical error; standalone helpers throw without logging. Missing native
-  `Intl.NumberFormat.prototype.formatRange` or `formatRangeToParts` produces a method-specific
-  call-time `TypeError` with runtime/polyfill guidance, without breaking imports or unrelated
-  operations. No fallback, polyfill, dependency, DOM behavior, or state events are added; date and
-  clock ranges remain future work.
-- Add DOM-free `formatNumberToParts()`, `formatCurrencyToParts()`, `formatRelativeTimeToParts()`,
-  `formatDateToParts()`, `formatTimeToParts()`, and `formatWeekdayToParts()` helpers and matching
-  Translator methods. Results are fresh, mutable, caller-owned native parts
-  arrays and records, retaining existing strict inputs, locale overrides, and native defaults;
-  relative-time literal parts may lack `unit`. Methods log original failures with operation-specific
-  events before rethrowing the same error; standalone helpers throw without logging. Missing native
-  `formatToParts` methods produce actionable call-time `TypeError`s without breaking imports or
-  unrelated formatting. No HTML, DOM markers, or runtime dependencies are added.
-- Date, clock-time, and weekday parts return `Intl.DateTimeFormatPart[]`, sharing existing parsing,
-  options, and formatter caches with string calls. Preserve UTC calendar dates versus explicit/host-zone
-  instants, clock restrictions and seconds-presence defaults, and Monday-zero weekday numbering.
-  Clock parts expose no synthetic date or zone. Native date/time parts can differ from string output
-  in literal whitespace; existing string return types and behavior remain unchanged.
+- Add native structured formatting parts for numbers, currencies, relative times, dates, clock times,
+  and weekdays, through standalone helpers and matching Translator methods. Results are fresh,
+  caller-owned native parts; existing formatting defaults and behavior remain unchanged.
+- Add native number, currency, date, and clock-time ranges, returning strings or source-tagged parts.
+  Date ranges distinguish calendar dates from instants; clock ranges use same-day ordering and
+  pair-aware seconds defaults. Unsupported native operations fail at call time without affecting
+  imports or unrelated formatting.
 - Require TypeScript `ES2023` libraries, or `ES2022` plus `ES2023.Intl`, instead of ES2022 alone.
-  Root declarations remain usable without DOM or Node ambient types. The emitted JavaScript target
-  stays ES2022 and the Node minimum stays `22.13.0`; newer declarations do not supply runtime polyfills.
+  Root declarations remain DOM-free; the JavaScript target stays ES2022 and the Node minimum stays
+  `22.13.0`.
 
 ## 0.3.0 - 2026-10-05
 

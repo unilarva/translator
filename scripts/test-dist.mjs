@@ -259,6 +259,116 @@ function assertNumberRanges(api, translator) {
 
 assertNumberRanges(core, translator);
 
+/** Checks calendar/instant pairs and clock ranges through built and installed exports. */
+function assertDateTimeRanges(api, translator) {
+  const calendar = { year: 2026, month: 10, day: 3 };
+  const clock = { hour: 13, minute: 45, second: 0 };
+  for (const language of ["en", "fi"]) {
+    for (const [family, start, end, nativeStart, nativeEnd, options, nativeOptions] of [
+      [
+        "Date",
+        calendar,
+        "2026-10-05",
+        new Date("2026-10-03T00:00Z"),
+        new Date("2026-10-05T00:00Z"),
+        { timeZone: "America/New_York" },
+        { year: "numeric", month: "numeric", day: "numeric", timeZone: "UTC" },
+      ],
+      [
+        "Date",
+        new Date("2026-10-03T13:45Z"),
+        new Date("2026-10-05T14:30Z"),
+        new Date("2026-10-03T13:45Z"),
+        new Date("2026-10-05T14:30Z"),
+        { dateStyle: "long", timeZone: "America/New_York" },
+        { dateStyle: "long", timeZone: "America/New_York" },
+      ],
+      [
+        "Time",
+        "13:00",
+        clock,
+        new Date("1970-01-01T13:00Z"),
+        new Date("1970-01-01T13:45Z"),
+        {},
+        { hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: "UTC" },
+      ],
+      [
+        "Time",
+        clock,
+        "14:30",
+        new Date("1970-01-01T13:45Z"),
+        new Date("1970-01-01T14:30Z"),
+        { timeStyle: "short" },
+        { timeStyle: "short", timeZone: "UTC" },
+      ],
+    ]) {
+      const formatter = new Intl.DateTimeFormat(language, nativeOptions);
+      const rangeOptions = { ...options, language };
+      for (const format of [
+        () => api["format" + family + "Range"](start, end, "en", rangeOptions),
+        () => translator["format" + family + "Range"](start, end, rangeOptions),
+      ])
+        assert.equal(format(), formatter.formatRange(nativeStart, nativeEnd));
+      const expected = formatter.formatRangeToParts(nativeStart, nativeEnd);
+      assert.ok(expected.some(part => part.source === "startRange"));
+      assert.ok(expected.some(part => part.source === "endRange"));
+      assert.ok(expected.some(part => part.source === "shared"));
+      for (const format of [
+        () => api["format" + family + "RangeToParts"](start, end, "en", rangeOptions),
+        () => translator["format" + family + "RangeToParts"](start, end, rangeOptions),
+      ]) {
+        const first = format();
+        const second = format();
+        assert.deepEqual(first, expected);
+        assert.deepEqual(second, expected);
+        assert.notStrictEqual(first, second);
+        assert.equal(Object.isFrozen(first), false);
+        for (let index = 0; index < first.length; index++) {
+          assert.ok(["startRange", "endRange", "shared"].includes(first[index].source));
+          if (family === "Time")
+            assert.ok(
+              ![
+                "era",
+                "year",
+                "relatedYear",
+                "yearName",
+                "month",
+                "day",
+                "weekday",
+                "timeZoneName",
+              ].includes(first[index].type),
+            );
+          assert.notStrictEqual(first[index], second[index]);
+          assert.equal(Object.isFrozen(first[index]), false);
+          first[index].value = "consumer mutation";
+          first[index].source = first[index].source === "shared" ? "startRange" : "shared";
+        }
+        first.push({ type: "literal", value: "consumer-owned", source: "shared" });
+        first.length = 0;
+        assert.deepEqual(second, expected);
+        assert.deepEqual(format(), expected);
+      }
+    }
+  }
+  for (const suffix of ["Range", "RangeToParts"]) {
+    for (const format of [
+      (start, end) => api["formatDate" + suffix](start, end, "en"),
+      (start, end) => translator["formatDate" + suffix](start, end),
+    ]) {
+      assert.throws(() => format(calendar, new Date()), RangeError);
+      assert.throws(() => format(new Date(), calendar), RangeError);
+      assert.throws(() => format("2026-10-05", calendar), RangeError);
+    }
+    for (const format of [
+      (start, end) => api["formatTime" + suffix](start, end, "en"),
+      (start, end) => translator["formatTime" + suffix](start, end),
+    ])
+      assert.throws(() => format("23:00", "01:00"), RangeError);
+  }
+}
+
+assertDateTimeRanges(core, translator);
+
 const typescriptManifest = fileURLToPath(import.meta.resolve("typescript/package.json"));
 const typescript = resolve(dirname(typescriptManifest), "bin/tsc");
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
@@ -322,7 +432,8 @@ try {
       assert.equal(translator.formatRelativeTime(0, "day", { numeric: "auto" }), "today");
       assert.equal(translator.selectPlural(1), "one");
        (${assertParts.toString()})(core, translator);
-       (${assertNumberRanges.toString()})(core, translator);
+        (${assertNumberRanges.toString()})(core, translator);
+        (${assertDateTimeRanges.toString()})(core, translator);
       const catalogEvents = [];
       const unsubscribeCatalog = translator.subscribeCatalog(event => catalogEvents.push(event));
       translator.setTranslation("smoke", { en: "Installed package" });
@@ -398,6 +509,57 @@ try {
         Object.defineProperty(prototype, missing, descriptor);
       }
     `,
+      ],
+      { cwd: consumer, stdio: "inherit" },
+    );
+  }
+
+  for (const missing of ["formatRange", "formatRangeToParts"]) {
+    execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+      import assert from "node:assert/strict";
+      const missing = ${JSON.stringify(missing)};
+      const prototype = Intl.DateTimeFormat.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, missing);
+      Object.defineProperty(prototype, missing, { configurable: true, value: undefined });
+      try {
+        const core = await import("@unilarva/translator");
+        const translator = new core.Translator({ language: "en" });
+        assert.equal(typeof core.formatDate("2026-10-03", "en"), "string");
+        assert.equal(typeof translator.formatTime("13:45"), "string");
+        assert.ok(core.formatDateToParts("2026-10-03", "en").length > 0);
+        assert.ok(translator.formatTimeToParts("13:45").length > 0);
+        assert.ok(translator.formatWeekdayToParts(0).length > 0);
+        assert.equal(core.formatNumberRange(1, 2, "en"), new Intl.NumberFormat("en").formatRange(1, 2));
+        assert.deepEqual(translator.formatNumberRangeToParts(1, 2), new Intl.NumberFormat("en").formatRangeToParts(1, 2));
+        const suffix = missing === "formatRange" ? "Range" : "RangeToParts";
+        const supported = missing === "formatRange" ? "RangeToParts" : "Range";
+        const native = missing === "formatRange" ? "formatRangeToParts" : "formatRange";
+        for (const [family, start, end, nativeStart, nativeEnd, options] of [
+          ["Date", "2026-10-03", "2026-10-05", new Date("2026-10-03T00:00Z"), new Date("2026-10-05T00:00Z"),
+            { year: "numeric", month: "numeric", day: "numeric", timeZone: "UTC" }],
+          ["Time", "13:00", "14:00", new Date("1970-01-01T13:00Z"), new Date("1970-01-01T14:00Z"),
+            { hour: "numeric", minute: "2-digit", timeZone: "UTC" }],
+        ]) {
+          const helper = "format" + family + suffix;
+          for (const call of [
+            () => core[helper](start, end, "en"),
+            () => translator[helper](start, end),
+          ]) assert.throws(call, error => error instanceof TypeError &&
+            error.message.includes("Intl.DateTimeFormat") && error.message.includes(missing) &&
+            /runtime|polyfill/i.test(error.message));
+          const formatter = new Intl.DateTimeFormat("en", options);
+          assert.deepEqual(core["format" + family + supported](start, end, "en"), formatter[native](nativeStart, nativeEnd));
+          assert.deepEqual(translator["format" + family + supported](start, end), formatter[native](nativeStart, nativeEnd));
+        }
+      } finally {
+        Object.defineProperty(prototype, missing, descriptor);
+      }
+      `,
       ],
       { cwd: consumer, stdio: "inherit" },
     );
@@ -663,6 +825,95 @@ try {
       `,
     ],
     [
+      "date-time-ranges",
+      ["ES2023"],
+      `
+      import { Translator, formatDateRange, formatDateRangeToParts, formatTimeRange, formatTimeRangeToParts, type CalendarDate, type ClockTime, type DateFormatOptions, type TimeFormatOptions } from "@unilarva/translator";
+      const translator = new Translator({ language: "en" });
+      const calendar: CalendarDate = { year: 2026, month: 10, day: 3 };
+      const clock: ClockTime = { hour: 13, minute: 45, second: 0 };
+      const dateOptions: DateFormatOptions = { language: "fi", dateStyle: "long", timeZone: "UTC" };
+      const timeOptions: TimeFormatOptions = { language: "fi", timeStyle: "medium", hour12: false };
+      const dateRange: string = formatDateRange(calendar, "2026-10-04", "en", dateOptions);
+      const timeRange: string = formatTimeRange("13:00", clock, "en", timeOptions);
+      const dateRangeParts: Intl.DateTimeRangeFormatPart[] = formatDateRangeToParts(new Date(), new Date(), "en", dateOptions);
+      const timeRangeParts: Intl.DateTimeRangeFormatPart[] = formatTimeRangeToParts(clock, "14:00", "en", timeOptions);
+      const methodDateRange: string = translator.formatDateRange(new Date(), new Date(), dateOptions);
+      const methodTimeRange: string = translator.formatTimeRange(clock, "14:00", timeOptions);
+      const methodDateRangeParts: Intl.DateTimeRangeFormatPart[] = translator.formatDateRangeToParts("2026-10-03", calendar, dateOptions);
+      const methodTimeRangeParts: Intl.DateTimeRangeFormatPart[] = translator.formatTimeRangeToParts("13:00", clock, timeOptions);
+      for (const parts of [dateRangeParts, timeRangeParts, methodDateRangeParts, methodTimeRangeParts]) {
+        parts.push({ type: "literal", value: "consumer-owned", source: "shared" });
+        parts[0]!.value = "consumer-owned";
+        const source: "startRange" | "endRange" | "shared" = parts[0]!.source;
+        parts[0]!.source = "endRange";
+        // @ts-expect-error Native source metadata is a closed union.
+        parts[0]!.source = "start";
+      }
+      for (const format of [formatDateRange, formatDateRangeToParts]) {
+        format(calendar, "2026-10-04", "en");
+        format(new Date(), new Date(), "en");
+        // The union permits mixed pairs; runtime validation rejects them.
+        format(new Date(), calendar, "en");
+        format("2026-10-03", new Date(), "en");
+        // @ts-expect-error Date start endpoints do not accept timestamps.
+        format(0, calendar, "en");
+        // @ts-expect-error Date end records require a day.
+        format(calendar, { year: 2026, month: 10 }, "en");
+      }
+      for (const format of [translator.formatDateRange, translator.formatDateRangeToParts]) {
+        format(calendar, "2026-10-04");
+        format(new Date(), new Date());
+        format(calendar, new Date());
+        format(new Date(), "2026-10-04");
+        // @ts-expect-error Date start records require a day.
+        format({ year: 2026, month: 10 }, calendar);
+        // @ts-expect-error Date end endpoints do not accept timestamps.
+        format(calendar, 0);
+      }
+      for (const format of [formatTimeRange, formatTimeRangeToParts]) {
+        format("13:00", clock, "en");
+        format(clock, "14:00", "en");
+        // @ts-expect-error Clock start endpoints are not Date instants.
+        format(new Date(), clock, "en");
+        // @ts-expect-error Clock end records require minutes.
+        format(clock, { hour: 14 }, "en");
+        // @ts-expect-error Clock options forbid zones.
+        format(clock, clock, "en", { timeZone: "UTC" });
+        // @ts-expect-error Long clock styles expose a zone.
+        format(clock, clock, "en", { timeStyle: "long" });
+      }
+      for (const format of [translator.formatTimeRange, translator.formatTimeRangeToParts]) {
+        format(clock, "14:00");
+        format("13:00", clock);
+        // @ts-expect-error Clock start records require minutes.
+        format({ hour: 13 }, clock);
+        // @ts-expect-error Clock end endpoints are not Date instants.
+        format(clock, new Date());
+        // @ts-expect-error Clock options forbid calendar fields.
+        format(clock, clock, { year: "numeric" });
+        // @ts-expect-error Full clock styles expose a zone.
+        format(clock, clock, { timeStyle: "full" });
+      }
+      // @ts-expect-error Date range strings are not parts arrays.
+      const wrongDateRange: Intl.DateTimeRangeFormatPart[] = formatDateRange(calendar, calendar, "en");
+      // @ts-expect-error Clock range strings are not parts arrays.
+      const wrongTimeRange: Intl.DateTimeRangeFormatPart[] = formatTimeRange(clock, clock, "en");
+      // @ts-expect-error Date range parts are not strings.
+      const wrongDateRangeParts: string = formatDateRangeToParts(calendar, calendar, "en");
+      // @ts-expect-error Clock range parts are not strings.
+      const wrongTimeRangeParts: string = formatTimeRangeToParts(clock, clock, "en");
+      // @ts-expect-error Date method strings are not parts arrays.
+      const wrongMethodDateRange: Intl.DateTimeRangeFormatPart[] = translator.formatDateRange(calendar, calendar);
+      // @ts-expect-error Clock method strings are not parts arrays.
+      const wrongMethodTimeRange: Intl.DateTimeRangeFormatPart[] = translator.formatTimeRange(clock, clock);
+      // @ts-expect-error Date method parts are not strings.
+      const wrongMethodDateRangeParts: string = translator.formatDateRangeToParts(calendar, calendar);
+      // @ts-expect-error Clock method parts are not strings.
+      const wrongMethodTimeRangeParts: string = translator.formatTimeRangeToParts(clock, clock);
+      `,
+    ],
+    [
       "typed-lookup",
       ["ES2023"],
       `
@@ -755,7 +1006,9 @@ try {
     ],
   ]) {
     writeFileSync(join(consumer, `${name}.ts`), source);
-    for (const libraries of name === "numeric-ranges" ? [lib, ["ES2022", "ES2023.Intl"]] : [lib]) {
+    for (const libraries of ["core", "numeric-ranges", "date-time-ranges"].includes(name)
+      ? [lib, ["ES2022", "ES2023.Intl"]]
+      : [lib]) {
       const config = join(consumer, `${name}.json`);
       writeFileSync(
         config,

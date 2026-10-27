@@ -42,6 +42,8 @@ import {
   formatCurrencyRangeToParts as formatCurrencyRangeParts,
   formatCurrencyToParts as formatCurrencyParts,
   formatDate as formatDateValue,
+  formatDateRange as formatDateRangeValue,
+  formatDateRangeToParts as formatDateRangeParts,
   formatDateToParts as formatDateParts,
   formatNumber as formatNumberValue,
   formatNumberRange as formatNumberRangeValue,
@@ -50,6 +52,8 @@ import {
   formatRelativeTime as formatRelativeTimeValue,
   formatRelativeTimeToParts as formatRelativeTimeParts,
   formatTime as formatTimeValue,
+  formatTimeRange as formatTimeRangeValue,
+  formatTimeRangeToParts as formatTimeRangeParts,
   formatTimeToParts as formatTimeParts,
   formatWeekday as formatWeekdayValue,
   formatWeekdayToParts as formatWeekdayParts,
@@ -1316,6 +1320,51 @@ export class Translator {
   }
 
   /**
+   * Formats a native date range using the active language unless `options.language` overrides it.
+   * @param start - Valid Date instant, strict YYYY-MM-DD string, or integer calendar record.
+   * @param end - Compatible endpoint: calendars (strings/records may mix) or two Date instants.
+   * Both Dates are detached before options are read; reversed pairs are rejected, equal pairs use native behavior.
+   * @param options - Native options; numeric date defaults unless a style is set. Calendars force UTC
+   * and ignore supplied zones; instants use the explicit or host zone.
+   * @returns Native localized range text, without concatenation or endpoint collapse.
+   * @throws RangeError for invalid/incompatible/reversed endpoints or invalid locale/options; TypeError
+   * for native option errors or missing Intl.DateTimeFormat formatRange support (use a supporting
+   * runtime or consumer polyfill). Failures are logged and the identical error is rethrown.
+   */
+  public formatDateRange(
+    start: Date | string | CalendarDate,
+    end: Date | string | CalendarDate,
+    options: DateFormatOptions = {},
+  ): string {
+    return this.#format("date-range-format-failed", () =>
+      formatDateRangeValue(start, end, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats date range parts using the active language unless `options.language` overrides it.
+   * @param start - Valid Date instant, strict YYYY-MM-DD string, or integer calendar record.
+   * @param end - Compatible endpoint: calendars (strings/records may mix) or two Date instants.
+   * Both Dates are detached before options are read; reversed pairs are rejected, equal pairs use native behavior.
+   * @param options - Native options; numeric date defaults unless a style is set. Calendars force UTC
+   * and ignore supplied zones; instants use the explicit or host zone.
+   * @returns Fresh, caller-owned mutable native parts and records preserving order, literals and
+   * startRange/endRange/shared source metadata, not HTML.
+   * @throws RangeError for invalid/incompatible/reversed endpoints or invalid locale/options; TypeError
+   * for native option errors or missing Intl.DateTimeFormat formatRangeToParts support (use a supporting
+   * runtime or consumer polyfill). Failures are logged and the identical error is rethrown.
+   */
+  public formatDateRangeToParts(
+    start: Date | string | CalendarDate,
+    end: Date | string | CalendarDate,
+    options: DateFormatOptions = {},
+  ): Intl.DateTimeRangeFormatPart[] {
+    return this.#format("date-range-format-to-parts-failed", () =>
+      formatDateRangeParts(start, end, this.#language, options),
+    );
+  }
+
+  /**
    * Formats clock fields without time-zone conversion, defaulting to hour/minute and explicit seconds.
    * @param value - Strict HH:MM or HH:MM:SS string, or integer clock fields (seconds default to zero).
    * @param options - Zone-free Intl clock options and language override; short/medium styles are supported.
@@ -1345,6 +1394,50 @@ export class Translator {
   ): Intl.DateTimeFormatPart[] {
     return this.#format("time-format-to-parts-failed", () =>
       formatTimeParts(value, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats a same-day clock range using the active language unless `options.language` overrides it.
+   * @param start - Strict HH:MM/HH:MM:SS string or integer clock record; no zone conversion occurs.
+   * @param end - Clock endpoint not earlier than start; use Date ranges for cross-midnight intervals.
+   * @param options - Clock-only options; hour/minute plus seconds if either endpoint supplied them
+   * (including zero). Defined components override defaults; short/medium styles replace them.
+   * Date/zone fields are forbidden even when undefined.
+   * @returns Native localized clock range text with no synthetic date/zone labels or overnight inference.
+   * @throws RangeError for invalid/reversed clocks, restrictions or locale/options; TypeError for native
+   * option errors or missing Intl.DateTimeFormat formatRange support (use a supporting runtime or consumer
+   * polyfill). Failures are logged and the identical error is rethrown.
+   */
+  public formatTimeRange(
+    start: string | ClockTime,
+    end: string | ClockTime,
+    options: TimeFormatOptions = {},
+  ): string {
+    return this.#format("time-range-format-failed", () =>
+      formatTimeRangeValue(start, end, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats same-day clock range parts using the active language or `options.language` override.
+   * @param start - Strict HH:MM/HH:MM:SS string or integer clock record; no zone conversion occurs.
+   * @param end - Clock endpoint not earlier than start; use Date ranges for cross-midnight intervals.
+   * @param options - Clock-only options; hour/minute plus pair-aware seconds default unless a short/medium
+   * style is set. Defined components override defaults; date/zone fields are forbidden even if undefined.
+   * @returns Fresh, caller-owned mutable native parts and records preserving order, literals and
+   * startRange/endRange/shared sources, not HTML; no synthetic date/zone fields are exposed.
+   * @throws RangeError for invalid/reversed clocks, restrictions or locale/options; TypeError for native
+   * option errors or missing Intl.DateTimeFormat formatRangeToParts support (use a supporting runtime or
+   * consumer polyfill). Failures are logged and the identical error is rethrown.
+   */
+  public formatTimeRangeToParts(
+    start: string | ClockTime,
+    end: string | ClockTime,
+    options: TimeFormatOptions = {},
+  ): Intl.DateTimeRangeFormatPart[] {
+    return this.#format("time-range-format-to-parts-failed", () =>
+      formatTimeRangeParts(start, end, this.#language, options),
     );
   }
 

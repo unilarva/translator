@@ -18,12 +18,16 @@ import {
   formatCurrencyRange,
   formatCurrencyRangeToParts,
   formatCurrencyToParts,
+  formatDateRange,
+  formatDateRangeToParts,
   formatDateToParts,
   formatNumberRange,
   formatNumberRangeToParts,
   formatNumberToParts,
   formatRelativeTime,
   formatRelativeTimeToParts,
+  formatTimeRange,
+  formatTimeRangeToParts,
   formatTimeToParts,
   formatWeekdayToParts,
   type DateFormatOptions,
@@ -44,6 +48,496 @@ import {
   type TimeFormatOptions,
 } from "../src/intl.ts";
 import { asElement, asParentNode } from "./dom-test-utils.ts";
+
+test("date ranges preserve native UTC calendar pairs, instant zones, DST and equal endpoints", () => {
+  const first = new Date("2026-03-08T06:30:00Z");
+  const last = new Date("2026-03-08T08:30:00Z");
+  for (const language of ["en-x-drnative", "fi-x-drnative", "ar-x-drnative", "ja-x-drnative"]) {
+    for (const options of [
+      {},
+      { month: "long", day: "2-digit" },
+      { dateStyle: "full" },
+      { dateStyle: "medium", timeStyle: "short" },
+      { year: undefined, month: "short" },
+    ] as DateFormatOptions[]) {
+      for (const end of ["2026-03-08", { year: 2026, month: 3, day: 10 }]) {
+        const date =
+          typeof end === "string" ? new Date(`${end}T00:00:00Z`) : new Date("2026-03-10T00:00:00Z");
+        const effective = {
+          ...(options.dateStyle === undefined && options.timeStyle === undefined
+            ? ({ year: "numeric", month: "numeric", day: "numeric" } as const)
+            : {}),
+          ...options,
+          timeZone: "UTC",
+        };
+        const native = new Intl.DateTimeFormat(language, effective);
+        const start = new Date("2026-03-08T00:00:00Z");
+        assert.equal(
+          formatDateRange("2026-03-08", end, language, { ...options, timeZone: "Invalid/Zone" }),
+          native.formatRange(start, date),
+        );
+        assert.deepEqual(
+          formatDateRangeToParts("2026-03-08", end, language, {
+            ...options,
+            timeZone: "America/Los_Angeles",
+          }),
+          native.formatRangeToParts(start, date),
+        );
+        assert.equal(formatDateRange(end, end, language, options), native.formatRange(date, date));
+      }
+    }
+    for (const timeZone of ["UTC", "America/New_York", "America/Los_Angeles"]) {
+      const options = { dateStyle: "long", timeStyle: "long", timeZone } as const;
+      const native = new Intl.DateTimeFormat(language, options);
+      assert.equal(
+        formatDateRange(first, last, language, options),
+        native.formatRange(first, last),
+      );
+      assert.deepEqual(
+        formatDateRangeToParts(first, last, language, options),
+        native.formatRangeToParts(first, last),
+      );
+    }
+  }
+});
+
+test("clock ranges match native pair-seconds defaults without synthetic date or zone leakage", () => {
+  const choices: TimeFormatOptions[] = [
+    {},
+    { timeStyle: "short" },
+    { timeStyle: "medium" },
+    { hour: "2-digit", minute: "numeric", hourCycle: "h24" },
+    { hour12: true, dayPeriod: "long" },
+    { hour12: false, second: "numeric" },
+    { fractionalSecondDigits: 3 },
+    { hour: undefined, minute: undefined, second: undefined },
+    { calendar: "islamic", numberingSystem: "arab", hourCycle: "h11" },
+  ];
+  const pairs: [string | ClockTime, string | ClockTime, number, number, boolean][] = [
+    ["00:00", "00:00", 0, 0, false],
+    ["00:00", "23:59", 0, 86340, false],
+    ["09:05", "10:06:00", 32700, 36360, true],
+    ["09:05:00", { hour: 10, minute: 6 }, 32700, 36360, true],
+    [{ hour: 9, minute: 5, second: undefined }, "10:06", 32700, 36360, false],
+    [{ hour: 0, minute: 0 }, { hour: 23, minute: 59, second: 59 }, 0, 86399, true],
+    ["11:59:59", "12:00:00", 43199, 43200, true],
+    ["12:00", "23:59:59", 43200, 86399, true],
+  ];
+  for (const language of [
+    "en-US",
+    "en-GB",
+    "fi",
+    "pt-BR",
+    "ar-EG",
+    "ja-JP",
+    "zh-CN",
+    "th-TH",
+    "fa-IR",
+    "he-IL",
+    "hi-IN",
+  ]) {
+    for (const options of choices) {
+      for (const [start, end, first, last, seconds] of pairs) {
+        const native = new Intl.DateTimeFormat(language, {
+          ...(options.timeStyle === undefined
+            ? ({
+                hour: "numeric",
+                minute: "2-digit",
+                ...(seconds ? { second: "2-digit" } : {}),
+              } as const)
+            : {}),
+          ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)),
+          timeZone: "UTC",
+        });
+        const startDate = new Date(first * 1000);
+        const endDate = new Date(last * 1000);
+        const text = formatTimeRange(start, end, language, options);
+        const parts = formatTimeRangeToParts(start, end, language, options);
+        const context = JSON.stringify({ language, options, start, end, text, parts });
+        assert.equal(text, native.formatRange(startDate, endDate), context);
+        assert.deepEqual(parts, native.formatRangeToParts(startDate, endDate), context);
+        assert.ok(
+          parts.every(part =>
+            ["hour", "minute", "second", "fractionalSecond", "dayPeriod", "literal"].includes(
+              part.type,
+            ),
+          ),
+          context,
+        );
+        // Equal ranges can retain single-value whitespace differences; ignore only whitespace here.
+        assert.equal(
+          text.replace(/\s/g, ""),
+          parts
+            .map(part => part.value)
+            .join("")
+            .replace(/\s/g, ""),
+          context,
+        );
+      }
+    }
+  }
+});
+
+test("date and clock ranges reject invalid pairs, reversed endpoints and all clock restrictions", () => {
+  for (const format of [formatDateRange, formatDateRangeToParts]) {
+    for (const invalid of [
+      "2026-02-30",
+      "2026-3-01",
+      "2026-03-01T00:00:00Z",
+      new Date(NaN),
+      runInNewContext("new Date(NaN)"),
+      { year: 2026, month: 2, day: 29 },
+      { [Symbol.toStringTag]: "Date", getTime: () => 0 },
+    ]) {
+      assert.throws(() => format(invalid as Date, "2026-03-10", "en"), RangeError);
+      assert.throws(() => format("2026-03-01", invalid as Date, "en"), RangeError);
+    }
+    const date = new Date("2026-03-01T00:00:00Z");
+    assert.throws(
+      () => format(date, "2026-03-10", "en"),
+      /both be calendar dates or both be Date instants/,
+    );
+    assert.throws(() => format({ year: 2026, month: 3, day: 1 }, date, "en"), RangeError);
+    assert.throws(() => format("2026-03-10", "2026-03-01", "en"), RangeError);
+    assert.throws(() => format(new Date("2026-03-10"), date, "en"), RangeError);
+    assert.throws(() => format(date, date, "en", { timeZone: "Invalid/Zone" }), RangeError);
+    assert.throws(() => format(date, date, "en", { dateStyle: "long", month: "long" }), TypeError);
+    assert.throws(() => format(date, date, "not_a_locale!"), RangeError);
+  }
+  for (const format of [formatTimeRange, formatTimeRangeToParts]) {
+    for (const invalid of [
+      "24:00",
+      "9:00",
+      "09:00:60",
+      { hour: 9, minute: 60 },
+      { hour: 1.5, minute: 0 },
+      { hour: 9, minute: 0, second: NaN },
+    ]) {
+      assert.throws(() => format(invalid, "10:00", "en"), RangeError);
+      assert.throws(() => format("09:00", invalid, "en"), RangeError);
+    }
+    for (const [start, end] of [
+      ["23:00", "01:00"],
+      ["09:05:01", "09:05"],
+      ["09:06", "09:05:59"],
+    ])
+      assert.throws(() => format(start, end, "en"), /overnight ranges are not inferred/);
+    for (const field of [
+      "dateStyle",
+      "era",
+      "year",
+      "month",
+      "day",
+      "weekday",
+      "timeZone",
+      "timeZoneName",
+    ]) {
+      for (const options of [
+        { [field]: undefined },
+        { [field]: "long" },
+        Object.create({ [field]: undefined }),
+      ])
+        assert.throws(
+          () => format("09:00", "10:00", "en", options),
+          new RegExp(`does not support ${field}`),
+        );
+    }
+    for (const timeStyle of ["long", "full"])
+      assert.throws(
+        () => format("09:00", "10:00", "en", { timeStyle } as TimeFormatOptions),
+        RangeError,
+      );
+    assert.throws(
+      () => format("09:00", "10:00", "en", { timeStyle: "short", hour: "numeric" }),
+      TypeError,
+    );
+    assert.throws(() => format("09:00", "10:00", "bad!"), RangeError);
+  }
+});
+
+test("date ranges detach both native Date slots before option getters and coercions", () => {
+  for (const format of [formatDateRange, formatDateRangeToParts]) {
+    for (const getter of [false, true]) {
+      const startTime = Date.UTC(2026, 8, 30, 0, 30);
+      const endTime = Date.UTC(2026, 9, 2, 1, 30);
+      const start = runInNewContext(`new Date(${startTime})`) as Date;
+      const end = new Date(endTime);
+      for (const date of [start, end]) {
+        date.getTime = () => {
+          throw new Error("Overridden getTime must not be called");
+        };
+        date.valueOf = () => 0;
+        Object.defineProperty(date, Symbol.toPrimitive, { value: () => 0 });
+      }
+      const mutate = () => {
+        start.setTime(NaN);
+        end.setTime(0);
+        return "UTC";
+      };
+      const options: DateFormatOptions = getter
+        ? {
+            get timeZone() {
+              return mutate();
+            },
+            dateStyle: "long",
+          }
+        : { timeZone: { toString: mutate } as unknown as string, dateStyle: "long" };
+      const native = new Intl.DateTimeFormat("en", { timeZone: "UTC", dateStyle: "long" });
+      assert.deepEqual(
+        format(start, end, "en", options),
+        format === formatDateRange
+          ? native.formatRange(startTime, endTime)
+          : native.formatRangeToParts(startTime, endTime),
+      );
+      assert.ok(Number.isNaN(Date.prototype.getTime.call(start)));
+      assert.equal(Date.prototype.getTime.call(end), 0);
+    }
+  }
+});
+
+test("date and clock range methods preserve locale policy, state, input ownership and fresh sources", () => {
+  const translator = new Translator({ language: "fi", fallbackLanguage: "ja" });
+  const events: unknown[] = [];
+  translator.subscribe(event => events.push(event));
+  translator.subscribeCatalog(event => events.push(event));
+  translator.subscribeLanguages(event => events.push(event));
+  const start = Object.freeze({ year: 2026, month: 3, day: 1 });
+  const end = Object.freeze({ year: 2026, month: 3, day: 10 });
+  const first = Object.freeze({ hour: 9, minute: 5 });
+  const last = Object.freeze({ hour: 10, minute: 6, second: 0 });
+  for (const language of [undefined, "en-US"]) {
+    const options = Object.freeze({ language });
+    const tag = language ?? "fi";
+    assert.equal(translator.formatDateRange(start, end, options), formatDateRange(start, end, tag));
+    assert.deepEqual(
+      translator.formatDateRangeToParts(start, end, options),
+      formatDateRangeToParts(start, end, tag),
+    );
+    assert.equal(
+      translator.formatTimeRange(first, last, options),
+      formatTimeRange(first, last, tag),
+    );
+    assert.deepEqual(
+      translator.formatTimeRangeToParts(first, last, options),
+      formatTimeRangeToParts(first, last, tag),
+    );
+  }
+  assert.equal(translator.getLanguage(), "fi");
+  assert.deepEqual(events, []);
+  for (const call of [
+    () => formatDateRangeToParts(start, end, "en"),
+    () => translator.formatDateRangeToParts(start, end),
+    () => formatTimeRangeToParts(first, last, "en"),
+    () => translator.formatTimeRangeToParts(first, last),
+  ]) {
+    const parts = call();
+    const expected = structuredClone(parts);
+    assert.ok(parts.some(part => part.source === "startRange"));
+    assert.ok(parts.some(part => part.source === "endRange"));
+    assert.ok(parts.some(part => part.source === "shared"));
+    parts[0].value = "changed";
+    parts[0].source = "shared";
+    parts.pop();
+    assert.deepEqual(call(), expected);
+    assert.notEqual(call()[0], call()[0]);
+  }
+});
+
+test("date and clock ranges share formatter caches, snapshot options and bypass unsafe/host-zone caching", t => {
+  const Native = Intl.DateTimeFormat;
+  let constructions = 0;
+  t.mock.method(Intl, "DateTimeFormat", function (...args: ConstructorParameters<typeof Native>) {
+    constructions++;
+    return new Native(...args);
+  });
+  formatDate("2026-03-01", "en-x-drcache");
+  formatDateToParts("2026-03-01", "en-x-drcache");
+  formatDateRange("2026-03-01", "2026-03-10", "EN_x_drcache");
+  formatDateRangeToParts("2026-03-01", "2026-03-10", "en-x-drcache", { timeZone: "Ignored/Zone" });
+  formatTime("09:05:00", "en-x-drcache");
+  formatTimeToParts("09:05:00", "en-x-drcache");
+  formatTimeRange("09:05", "10:06:00", "en-x-drcache");
+  formatTimeRangeToParts("09:05:00", "10:06", "en-x-drcache");
+  assert.equal(constructions, 2);
+  let reads = 0;
+  const options = {
+    get hour(): "2-digit" {
+      reads++;
+      return "2-digit";
+    },
+  };
+  formatDateRange("2026-03-01", "2026-03-10", "en-x-drreads", options);
+  formatDateRangeToParts("2026-03-01", "2026-03-10", "en-x-drreads", options);
+  formatTimeRange("09:05", "10:06", "en-x-drreads", options);
+  formatTimeRangeToParts("09:05", "10:06", "en-x-drreads", options);
+  assert.equal(reads, 4);
+  let coercions = 0;
+  const hour = {
+    toString: () => {
+      coercions++;
+      return "numeric";
+    },
+  } as unknown as "numeric";
+  const before = constructions;
+  for (let index = 0; index < 2; index++) {
+    formatDateRange("2026-03-01", "2026-03-10", "en-x-drcoerce", { hour });
+    formatDateRangeToParts("2026-03-01", "2026-03-10", "en-x-drcoerce", { hour });
+    formatTimeRange("09:05", "10:06", "en-x-drcoerce", { hour });
+    formatTimeRangeToParts("09:05", "10:06", "en-x-drcoerce", { hour });
+  }
+  assert.equal(constructions - before, 8);
+  assert.equal(coercions, 8);
+  const original = process.env.TZ;
+  t.after(() => {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  });
+  const start = new Date("2026-03-01T00:30:00Z");
+  const end = new Date("2026-03-02T00:30:00Z");
+  const results: string[] = [];
+  for (const timeZone of ["UTC", "America/Los_Angeles"]) {
+    process.env.TZ = timeZone;
+    const native = new Native("en", {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      timeZone,
+    });
+    const text = formatDateRange(start, end, "en-x-drhost");
+    assert.equal(text, native.formatRange(start, end));
+    assert.deepEqual(
+      formatDateRangeToParts(start, end, "en-x-drhost"),
+      native.formatRangeToParts(start, end),
+    );
+    results.push(text);
+  }
+  assert.notEqual(results[0], results[1]);
+});
+
+test("date and clock range diagnostics preserve original option/native errors even with failing loggers", t => {
+  const entries: TranslatorLogEntry[] = [];
+  const translator = new Translator({
+    language: "fi",
+    logger(entry) {
+      entries.push(entry);
+      throw new Error("Logger failed");
+    },
+  });
+  const error = new Error("Range coercion failed");
+  const hour = {
+    toString() {
+      throw error;
+    },
+  } as unknown as "numeric";
+  const methods = [
+    () => translator.formatDateRange("2026-03-01", "2026-03-10", { hour }),
+    () => translator.formatDateRangeToParts("2026-03-01", "2026-03-10", { hour }),
+    () => translator.formatTimeRange("09:05", "10:06", { hour }),
+    () => translator.formatTimeRangeToParts("09:05", "10:06", { hour }),
+  ];
+  for (const call of [
+    ...methods,
+    () => formatDateRange("2026-03-01", "2026-03-10", "en", { hour }),
+    () => formatDateRangeToParts("2026-03-01", "2026-03-10", "en", { hour }),
+    () => formatTimeRange("09:05", "10:06", "en", { hour }),
+    () => formatTimeRangeToParts("09:05", "10:06", "en", { hour }),
+  ])
+    assert.throws(call, thrown => thrown === error);
+  const events = [
+    "date-range-format-failed",
+    "date-range-format-to-parts-failed",
+    "time-range-format-failed",
+    "time-range-format-to-parts-failed",
+  ];
+  assert.deepEqual(
+    entries.map(entry => [entry.component, entry.event, entry.error, entry.details]),
+    events.map(event => ["intl", event, error, { language: "fi" }]),
+  );
+  const nativeError = new Error("Native range failed");
+  for (const method of ["formatRange", "formatRangeToParts"] as const)
+    t.mock.method(Intl.DateTimeFormat.prototype, method, () => {
+      throw nativeError;
+    });
+  const calls = [
+    () => translator.formatDateRange("2026-03-01", "2026-03-10"),
+    () => translator.formatDateRangeToParts("2026-03-01", "2026-03-10"),
+    () => translator.formatTimeRange("09:05", "10:06"),
+    () => translator.formatTimeRangeToParts("09:05", "10:06"),
+  ];
+  for (const call of calls) assert.throws(call, thrown => thrown === nativeError);
+  assert.deepEqual(
+    entries.slice(4).map(entry => [entry.event, entry.error]),
+    events.map(event => [event, nativeError]),
+  );
+});
+
+test("missing date-time range methods are isolated call-time capabilities on warmed formatters", async t => {
+  const prototype = Intl.DateTimeFormat.prototype;
+  const methods = ["formatRange", "formatRangeToParts"] as const;
+  const descriptors = methods.map(method => Object.getOwnPropertyDescriptor(prototype, method)!);
+  t.after(() =>
+    methods.forEach((method, index) =>
+      Object.defineProperty(prototype, method, descriptors[index]),
+    ),
+  );
+  formatDateRange("2026-03-01", "2026-03-10", "en-x-drmiss");
+  formatTimeRangeToParts("09:05", "10:06", "en-x-drmiss");
+  const entries: TranslatorLogEntry[] = [];
+  const translator = new Translator({
+    language: "en-x-drmiss",
+    logger: entry => entries.push(entry),
+  });
+  for (const [index, method] of methods.entries()) {
+    Object.defineProperty(prototype, method, { ...descriptors[index], value: undefined });
+    const modulePath = `../src/index.ts?missing-date-${method}`;
+    const imported = await import(modulePath);
+    const calls =
+      method === "formatRange"
+        ? [
+            () => imported.formatDateRange("2026-03-01", "2026-03-10", "en-x-drmiss"),
+            () => imported.formatTimeRange("09:05", "10:06", "en-x-drmiss"),
+            () => translator.formatDateRange("2026-03-01", "2026-03-10"),
+            () => translator.formatTimeRange("09:05", "10:06"),
+          ]
+        : [
+            () => imported.formatDateRangeToParts("2026-03-01", "2026-03-10", "en-x-drmiss"),
+            () => imported.formatTimeRangeToParts("09:05", "10:06", "en-x-drmiss"),
+            () => translator.formatDateRangeToParts("2026-03-01", "2026-03-10"),
+            () => translator.formatTimeRangeToParts("09:05", "10:06"),
+          ];
+    for (const call of calls)
+      assert.throws(call, {
+        name: "TypeError",
+        message: new RegExp(
+          `Intl\\.DateTimeFormat\\.prototype\\.${method} is unavailable.*supporting runtime.*polyfill`,
+        ),
+      });
+    assert.equal(typeof imported.formatDate("2026-03-01", "en"), "string");
+    assert.ok(imported.formatTimeToParts("09:05", "en").length > 0);
+    assert.ok(imported.formatWeekdayToParts(0, "en").length > 0);
+    assert.equal(typeof imported.formatNumberRange(1, 5, "en"), "string");
+    assert.ok(imported.formatNumberRangeToParts(1, 5, "en").length > 0);
+    assert.ok(imported.formatRelativeTimeToParts(1, "day", "en").length > 0);
+    if (method === "formatRange") {
+      assert.ok(translator.formatDateRangeToParts("2026-03-01", "2026-03-10").length > 0);
+      assert.ok(translator.formatTimeRangeToParts("09:05", "10:06").length > 0);
+    } else {
+      assert.equal(typeof translator.formatDateRange("2026-03-01", "2026-03-10"), "string");
+      assert.equal(typeof translator.formatTimeRange("09:05", "10:06"), "string");
+    }
+    Object.defineProperty(prototype, method, descriptors[index]);
+  }
+  assert.deepEqual(
+    entries.map(entry => entry.event),
+    [
+      "date-range-format-failed",
+      "time-range-format-failed",
+      "date-range-format-to-parts-failed",
+      "time-range-format-to-parts-failed",
+    ],
+  );
+  assert.ok(entries.every(entry => entry.error instanceof TypeError));
+});
 
 test("numeric ranges preserve native descending, equal, rounded, signed-zero and affix semantics", () => {
   const choices: NumberFormatOptions[] = [

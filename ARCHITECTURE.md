@@ -38,7 +38,6 @@ This document is for package maintainers. Consumer setup and behavior belong in
 - [Development](#development)
 - [Adding Or Changing Features](#adding-or-changing-features)
 - [Future Enhancements](#future-enhancements)
-  - [Date And Clock Formatting Ranges](#date-and-clock-formatting-ranges)
   - [Inserted Markup Observation](#inserted-markup-observation)
   - [JSON-To-Key Declaration Generation](#json-to-key-declaration-generation)
   - [Stable Reactive Snapshots](#stable-reactive-snapshots)
@@ -189,7 +188,27 @@ shared affixes to native range operations. Do not sort, reject descending numeri
 equal endpoints, or concatenate formatted values. Range-parts calls return direct fresh mutable
 `Intl.NumberRangeFormatPart[]` and records, preserving native order, literals, `approximatelySign`,
 and `source` (`startRange`, `endRange`, `shared`). Cache formatters, never endpoints or results.
-Date and clock ranges remain unimplemented.
+
+`formatDateRange()`, `formatDateRangeToParts()`, `formatTimeRange()`, and
+`formatTimeRangeToParts()` expose date-time native ranges with matching Translator methods and
+`Intl.DateTimeRangeFormatPart[]` for range parts. Share date defaults, clock restrictions,
+effective options and the bounded date-time cache with single-value strings and parts. Accept two
+calendar endpoints (strings/records may mix), forcing UTC, or two Date instants, using explicit/host
+zones. Reject mixed endpoint kinds even though the broad public union permits them. Read both native
+Date slots before option getters or coercions can mutate caller Dates; never cache endpoint values.
+Reject reversed date pairs explicitly: Node 24.22.1 accepts native reversed dates, so relying on
+native rejection alone would make the ordered pair contract host-dependent. Equal dates retain
+native range behavior. Host-zone instant pairs continue bypassing caching.
+
+Clock pairs share one synthetic UTC day. Explicitly reject reversed clocks without overnight
+inference; consumers needing cross-midnight intervals supply Date instants to date ranges. Without
+a style, include default seconds when either endpoint supplied them (including zero); defined
+components override defaults, undefined components cannot erase them. Reuse all single-clock
+prohibitions, including inherited/undefined fields and long/full styles. Test native clock ranges
+for synthetic date/zone leakage before extending their contract; never silently filter parts or
+invent localized text. Range parts preserve fresh mutable ownership, order, literals and native
+source metadata. Equal ranges can have native string/parts whitespace differences. No result
+caching, DOM markers, relative-time/weekday ranges or plural-range selection is added.
 
 Check the requested native `formatToParts`, `formatRange`, or `formatRangeToParts` method only at
 call time, never during module import.
@@ -197,7 +216,9 @@ A missing method throws an actionable `TypeError` naming the method and requirin
 or consumer-provided polyfill. Date, clock-time, and weekday parts require
 `Intl.DateTimeFormat.prototype.formatToParts`. Numeric range strings require only
 `Intl.NumberFormat.prototype.formatRange`; numeric range parts require only
-`Intl.NumberFormat.prototype.formatRangeToParts`. Name the exact missing method in the error;
+`Intl.NumberFormat.prototype.formatRangeToParts`. Date/clock range strings and parts require only
+the corresponding `Intl.DateTimeFormat.prototype.formatRange` or `formatRangeToParts` method.
+Name the exact missing method in the error;
 absence of one range method must not disable the other or ordinary string/single-value parts calls.
 Do not install polyfills or add string fallbacks;
 unsupported methods must not break imports or unrelated operations. Formatting uses active/explicit locales, never catalog
@@ -506,7 +527,10 @@ safe adapter and rethrow the identical error, including option-coercion and miss
 failures. Numeric range methods use `number-range-format-failed`,
 `number-range-format-to-parts-failed`, `currency-range-format-failed`, and
 `currency-range-format-to-parts-failed` through the same safe adapter, preserving original error
-identity even when logging fails. Range calls emit no language, catalog, or registry events.
+identity even when logging fails. Date/clock methods use `date-range-format-failed`,
+`date-range-format-to-parts-failed`, `time-range-format-failed`, and
+`time-range-format-to-parts-failed` through the same adapter. Range calls emit no language, catalog,
+or registry events.
 Preserve existing diagnostic events and detail shapes for existing string methods.
 
 Subscriber and logger callbacks run synchronously and are never awaited. Observe accidental returned
@@ -543,6 +567,17 @@ metadata. Test both endpoint validations, normalized currencies, supported round
 reuse, mutable ownership, no state events, and missing-method isolation across imports, ordinary
 formatting, single-value parts, and the other range operation. Verify all four helpers and matching
 methods in source and clean installed-consumer runtime/type fixtures.
+
+Date/clock range coverage compares native strings and parts with the same effective options and
+detached endpoints. Cover calendar/string mixtures, mixed-kind rejection, reversed and equal pairs,
+cross-realm Dates, both endpoint detachments before option getters/coercions, explicit/host-zone
+and DST behavior, pair-aware seconds, forbidden options, no overnight inference, and synthetic
+date/zone leakage across locales, components, styles and endpoints. Check mutable ownership, native
+source metadata, shared caches, unsafe-coercion/host-zone bypasses, locale/state invariants and
+original error identity. Source and installed fixtures cover every helper/method and remove each
+date-time range method before import to verify independent call-time diagnostics. CI runs the full
+gate on minimum/release Node; browser Intl smoke coverage must be verified separately or recorded as
+unperformed rather than inferred from declarations or Node results.
 
 Tests that deliberately model hostile or malformed input are contract tests, not incidental edge
 cases. Preserve them when refactoring parsing or rendering.
@@ -624,27 +659,14 @@ points rather than changing current return types, event semantics, grammar, or c
 
 | Order | Candidate                           | Importance / implementation gate                  | Complexity  | Public contract addition                  |
 | ----- | ----------------------------------- | ------------------------------------------------- | ----------- | ----------------------------------------- |
-| 1     | Date and clock formatting ranges    | Natural follow-up; can ship separately            | Medium      | Range inputs, results, runtime support    |
-| 2     | Inserted markup observation         | High for dynamic imperative DOM when needed       | Medium-high | Opt-in scheduling and binding lifecycle   |
-| 3     | JSON-to-key declaration generation  | When external JSON makes typed keys inconvenient  | Medium      | Separate tooling inputs and output        |
-| 4     | Stable reactive snapshots           | Design from a concrete framework/SSR integration  | Medium-high | Stable identity and comprehensive events  |
-| 5     | One framework adapter               | When a target framework integration is required   | Medium      | Adapter lifecycle and SSR/hydration       |
-| 6     | Compiled plural and select messages | High i18n value; promote when messages require it | High        | Separate evaluation and compiled catalogs |
-| 7     | Source key extraction               | Separate tooling project with defined languages   | High        | Source syntax and dynamic-key policy      |
-| 8     | Broader rich-text grammar           | Only with a concrete grammar requirement          | High        | Opt-in grammar and node/renderer types    |
-| 9     | Asynchronous rendering              | Only when synchronous rendering is insufficient   | High        | Separate async lifecycle and completion   |
-
-### Date And Clock Formatting Ranges
-
-Number and currency range strings and parts are implemented. The remaining candidate is date and
-clock-time range strings and parts, with matching Translator methods. Define endpoint validation,
-calendar-versus-instant pair compatibility, clock ordering and seconds defaults, range-part source
-metadata, and native range/runtime availability. Preserve single-value calendar/clock/instant
-distinctions and cache/coercion behavior, and verify clock ranges never expose synthetic calendar or
-zone fields. Do not manufacture localized ranges by joining formatted strings. Date and clock range
-APIs remain unimplemented. Use native range types under the documented ES2023 Intl declaration
-baseline and verify isolated consumer declarations. Unsupported hosts need a method-specific
-call-time error, not an import-time failure or an implicit polyfill.
+| 1     | Inserted markup observation         | High for dynamic imperative DOM when needed       | Medium-high | Opt-in scheduling and binding lifecycle   |
+| 2     | JSON-to-key declaration generation  | When external JSON makes typed keys inconvenient  | Medium      | Separate tooling inputs and output        |
+| 3     | Stable reactive snapshots           | Design from a concrete framework/SSR integration  | Medium-high | Stable identity and comprehensive events  |
+| 4     | One framework adapter               | When a target framework integration is required   | Medium      | Adapter lifecycle and SSR/hydration       |
+| 5     | Compiled plural and select messages | High i18n value; promote when messages require it | High        | Separate evaluation and compiled catalogs |
+| 6     | Source key extraction               | Separate tooling project with defined languages   | High        | Source syntax and dynamic-key policy      |
+| 7     | Broader rich-text grammar           | Only with a concrete grammar requirement          | High        | Opt-in grammar and node/renderer types    |
+| 8     | Asynchronous rendering              | Only when synchronous rendering is insufficient   | High        | Separate async lifecycle and completion   |
 
 ### Inserted Markup Observation
 

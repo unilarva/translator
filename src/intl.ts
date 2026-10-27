@@ -31,7 +31,7 @@ export interface ClockTime {
   hour: number;
   /** Integer minute from 0 through 59. */
   minute: number;
-  /** Integer second from 0 through 59; omitted defaults to zero and is not shown by default. */
+  /** Integer second from 0 through 59; omitted defaults to zero, shown by default only if supplied on this clock or either range endpoint. */
   second?: number;
 }
 
@@ -604,11 +604,23 @@ function prepareDate(
 ) {
   const { language: languageOverride, ...providedOptions } = options;
   const { date, calendarOnly } = parseCalendarDate(value);
+  return {
+    formatter: dateFormatter(calendarOnly, languageOverride ?? language, providedOptions),
+    date,
+  };
+}
+
+/** Applies date defaults once and shares zone-sensitive caching for single values and pairs. */
+function dateFormatter(
+  calendarOnly: boolean,
+  language: string,
+  providedOptions: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat {
   const defaults: Intl.DateTimeFormatOptions =
     providedOptions.dateStyle === undefined && providedOptions.timeStyle === undefined
       ? { year: "numeric", month: "numeric", day: "numeric" }
       : {};
-  const tag = locale(languageOverride ?? language);
+  const tag = locale(language);
   const formatOptions: Intl.DateTimeFormatOptions = {
     ...defaults,
     ...providedOptions,
@@ -616,12 +628,11 @@ function prepareDate(
   };
   // The host time zone can change between calls when an instant has no explicit zone.
   const key = formatOptions.timeZone === undefined ? undefined : formatterKey(tag, formatOptions);
-  const formatter = cachedFormatter(
+  return cachedFormatter(
     dateTimeFormatters,
     key,
     () => new Intl.DateTimeFormat(tag, formatOptions),
   );
-  return { formatter, date };
 }
 
 /**
@@ -642,6 +653,103 @@ export function formatDateToParts(
 ): Intl.DateTimeFormatPart[] {
   const { formatter, date } = prepareDate(value, language, options);
   return dateTimeParts(formatter, date);
+}
+
+/** Detaches both endpoints before reading/coercing options, then checks compatible zone semantics. */
+function prepareDateRange(
+  start: Date | string | CalendarDate,
+  end: Date | string | CalendarDate,
+  language: string,
+  options: DateFormatOptions,
+) {
+  const first = parseCalendarDate(start);
+  const last = parseCalendarDate(end);
+  if (first.calendarOnly !== last.calendarOnly) {
+    throw new RangeError(
+      "Date range endpoints must both be calendar dates or both be Date instants",
+    );
+  }
+  // Newer hosts can accept reversed native ranges; retain the ordered date-pair contract on all hosts.
+  if (first.date > last.date) {
+    throw new RangeError("Date range start must not be later than end");
+  }
+  const { language: languageOverride, ...providedOptions } = options;
+  return {
+    formatter: dateFormatter(first.calendarOnly, languageOverride ?? language, providedOptions),
+    start: first.date,
+    end: last.date,
+  };
+}
+
+/**
+ * Formats compatible calendar dates or Date instants as a native localized range.
+ * @param start - Valid Date instant, strict `YYYY-MM-DD` string, or integer calendar record.
+ * @param end - Same endpoint kind as start: strings/records may mix, but calendars/instants may not.
+ * Both Dates are detached before options are read; reversed pairs are rejected and equal dates retain native behavior.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Native options; numeric year/month/day defaults unless a style is set.
+ * Calendar pairs force UTC and ignore supplied zones; Date pairs use the explicit or host zone.
+ * @returns Native localized range text, without package-selected separators or endpoint collapse.
+ * @throws {RangeError} If endpoints are invalid, incompatible, reversed, or locale/options are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.DateTimeFormat.prototype.formatRange`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatDateRange(
+  start: Date | string | CalendarDate,
+  end: Date | string | CalendarDate,
+  language: string,
+  options: DateFormatOptions = {},
+): string {
+  const pair = prepareDateRange(start, end, language, options);
+  return dateTimeRange(pair.formatter, pair.start, pair.end);
+}
+
+/**
+ * Formats compatible calendar dates or Date instants as native structured range parts.
+ * @param start - Valid Date instant, strict `YYYY-MM-DD` string, or integer calendar record.
+ * @param end - Same endpoint kind as start: strings/records may mix, but calendars/instants may not.
+ * Both Dates are detached before options are read; reversed pairs are rejected and equal dates retain native behavior.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Native options; numeric date defaults unless a style is set. Calendar pairs force
+ * UTC and ignore supplied zones; Date pairs use the explicit or host zone.
+ * @returns Fresh, caller-owned mutable native parts and records, preserving order, literals and
+ * `startRange`/`endRange`/`shared` source metadata; no HTML is produced.
+ * @throws {RangeError} If endpoints are invalid, incompatible, reversed, or locale/options are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.DateTimeFormat.prototype.formatRangeToParts`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatDateRangeToParts(
+  start: Date | string | CalendarDate,
+  end: Date | string | CalendarDate,
+  language: string,
+  options: DateFormatOptions = {},
+): Intl.DateTimeRangeFormatPart[] {
+  const pair = prepareDateRange(start, end, language, options);
+  return dateTimeRangeParts(pair.formatter, pair.start, pair.end);
+}
+
+/** Checks only the requested native string-range capability at call time. */
+function dateTimeRange(formatter: Intl.DateTimeFormat, start: Date, end: Date): string {
+  if (typeof formatter.formatRange !== "function") {
+    throw new TypeError(
+      "Intl.DateTimeFormat.prototype.formatRange is unavailable; use a supporting runtime or consumer-provided polyfill",
+    );
+  }
+  return formatter.formatRange(start, end);
+}
+
+/** Returns fresh native range parts after checking only this operation's host capability. */
+function dateTimeRangeParts(
+  formatter: Intl.DateTimeFormat,
+  start: Date,
+  end: Date,
+): Intl.DateTimeRangeFormatPart[] {
+  if (typeof formatter.formatRangeToParts !== "function") {
+    throw new TypeError(
+      "Intl.DateTimeFormat.prototype.formatRangeToParts is unavailable; use a supporting runtime or consumer-provided polyfill",
+    );
+  }
+  return formatter.formatRangeToParts(start, end);
 }
 
 /** Checks only the requested native parts capability, without probing during import or string calls. */
@@ -678,6 +786,21 @@ export function formatTime(
 
 /** Shares clock restrictions, parsing, seconds defaults, and UTC formatter caching across result forms. */
 function prepareTime(value: string | ClockTime, language: string, options: TimeFormatOptions) {
+  const { language: languageOverride, ...providedOptions } = clockOptions(options);
+  const time = parseClockTime(value);
+  const date = clockDate(time);
+  return {
+    formatter: clockFormatter(
+      time.hasExplicitSeconds,
+      languageOverride ?? language,
+      providedOptions,
+    ),
+    date,
+  };
+}
+
+/** Enforces clock-only restrictions while retaining the existing option snapshot/read order. */
+function clockOptions(options: TimeFormatOptions) {
   for (const option of CLOCK_FORBIDDEN_OPTIONS) {
     if (option in options) {
       throw new RangeError(`Clock time formatting does not support ${option}`);
@@ -687,17 +810,29 @@ function prepareTime(value: string | ClockTime, language: string, options: TimeF
   if (["long", "full"].includes(providedOptions.timeStyle ?? "")) {
     throw new RangeError("Clock time formatting supports only short or medium timeStyle");
   }
-  const time = parseClockTime(value);
-  const date = new Date(Date.UTC(1970, 0, 1, time.hour, time.minute, time.second));
+  return { language: languageOverride, ...providedOptions };
+}
+
+/** Anchors clock fields to one UTC day without inferring an overnight interval. */
+function clockDate(time: ParsedClockTime): Date {
+  return new Date(Date.UTC(1970, 0, 1, time.hour, time.minute, time.second));
+}
+
+/** Applies seconds-presence defaults and reuses the UTC formatter across result forms. */
+function clockFormatter(
+  hasExplicitSeconds: boolean,
+  language: string,
+  providedOptions: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat {
   const defaults: Intl.DateTimeFormatOptions =
     providedOptions.timeStyle === undefined
       ? {
           hour: "numeric",
           minute: "2-digit",
-          ...(time.hasExplicitSeconds ? { second: "2-digit" as const } : {}),
+          ...(hasExplicitSeconds ? { second: "2-digit" as const } : {}),
         }
       : {};
-  const tag = locale(languageOverride ?? language);
+  const tag = locale(language);
   const formatOptions: Intl.DateTimeFormatOptions = {
     ...defaults,
     // Undefined components must not erase clock defaults and trigger Intl's date-only fallback.
@@ -706,12 +841,11 @@ function prepareTime(value: string | ClockTime, language: string, options: TimeF
     ),
     timeZone: "UTC",
   };
-  const formatter = cachedFormatter(
+  return cachedFormatter(
     dateTimeFormatters,
     formatterKey(tag, formatOptions),
     () => new Intl.DateTimeFormat(tag, formatOptions),
   );
-  return { formatter, date };
 }
 
 /**
@@ -732,6 +866,80 @@ export function formatTimeToParts(
 ): Intl.DateTimeFormatPart[] {
   const { formatter, date } = prepareTime(value, language, options);
   return dateTimeParts(formatter, date);
+}
+
+/** Prepares a same-day clock pair with one shared seconds default and explicit ordering. */
+function prepareTimeRange(
+  start: string | ClockTime,
+  end: string | ClockTime,
+  language: string,
+  options: TimeFormatOptions,
+) {
+  const { language: languageOverride, ...providedOptions } = clockOptions(options);
+  const first = parseClockTime(start);
+  const last = parseClockTime(end);
+  const startDate = clockDate(first);
+  const endDate = clockDate(last);
+  if (startDate > endDate) {
+    throw new RangeError(
+      "Clock range start must not be later than end; overnight ranges are not inferred",
+    );
+  }
+  return {
+    formatter: clockFormatter(
+      first.hasExplicitSeconds || last.hasExplicitSeconds,
+      languageOverride ?? language,
+      providedOptions,
+    ),
+    start: startDate,
+    end: endDate,
+  };
+}
+
+/**
+ * Formats an ordered same-day clock range without date/zone labels or time-zone conversion.
+ * @param start - Strict `HH:MM`/`HH:MM:SS` string or integer clock record.
+ * @param end - Clock endpoint not earlier than start; use Date ranges for cross-midnight intervals.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Clock-only options. Without a style, defaults to hour/minute plus seconds if
+ * either endpoint supplied them (including zero). Defined components override defaults; short/medium
+ * styles replace them. Date/zone fields are forbidden even if undefined.
+ * @returns Native localized clock range text; no overnight inference or synthetic date/zone output.
+ * @throws {RangeError} If endpoints are invalid/reversed or clock restrictions, locale/options are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.DateTimeFormat.prototype.formatRange`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatTimeRange(
+  start: string | ClockTime,
+  end: string | ClockTime,
+  language: string,
+  options: TimeFormatOptions = {},
+): string {
+  const pair = prepareTimeRange(start, end, language, options);
+  return dateTimeRange(pair.formatter, pair.start, pair.end);
+}
+
+/**
+ * Formats an ordered same-day clock range as native parts without synthetic date/zone fields.
+ * @param start - Strict `HH:MM`/`HH:MM:SS` string or integer clock record.
+ * @param end - Clock endpoint not earlier than start; use Date ranges for cross-midnight intervals.
+ * @param language - Locale tag, unless overridden by `options.language`.
+ * @param options - Clock-only options; hour/minute and pair-aware seconds default unless a short/medium
+ * style is set. Defined components override defaults; date/zone fields are forbidden even if undefined.
+ * @returns Fresh, caller-owned mutable native parts and records, preserving order, literals and
+ * `startRange`/`endRange`/`shared` sources; no HTML or synthetic date/zone fields are produced.
+ * @throws {RangeError} If endpoints are invalid/reversed or clock restrictions, locale/options are invalid.
+ * @throws {TypeError} If Intl rejects options, or `Intl.DateTimeFormat.prototype.formatRangeToParts`
+ * is unavailable; use a supporting runtime or consumer-provided polyfill.
+ */
+export function formatTimeRangeToParts(
+  start: string | ClockTime,
+  end: string | ClockTime,
+  language: string,
+  options: TimeFormatOptions = {},
+): Intl.DateTimeRangeFormatPart[] {
+  const pair = prepareTimeRange(start, end, language, options);
+  return dateTimeRangeParts(pair.formatter, pair.start, pair.end);
 }
 
 /**

@@ -23,6 +23,7 @@ updates. Package internals and contributor workflows are documented in
 - [Locale Formatting](#locale-formatting)
   - [Structured Formatting Parts](#structured-formatting-parts)
   - [Number And Currency Ranges](#number-and-currency-ranges)
+  - [Date And Clock Ranges](#date-and-clock-ranges)
   - [Relative Time And Plural Selection](#relative-time-and-plural-selection)
 - [Logging](#logging)
 - [DOM Binding](#dom-binding)
@@ -991,8 +992,8 @@ string helper byte-for-byte; use the native parts as returned rather than normal
 
 Parts are structured text, not HTML or a safe-HTML representation. Consumers own rendering and
 context-appropriate escaping. These APIs add no DOM markers or automatic UI updates. All six
-single-value parts APIs and number/currency ranges are available; date and clock ranges remain
-future work. Existing string return types are unchanged.
+single-value parts APIs and number/currency/date/clock ranges are available. Existing string return
+types are unchanged.
 
 Each parts call checks only its required native method at call time:
 `Intl.NumberFormat.prototype.formatToParts` for number/currency,
@@ -1090,8 +1091,99 @@ safe logger adapter with the operation-specific event `number-range-format-faile
 and missing-method errors; logger failures cannot replace them. Calls do not mutate translator
 settings or emit language, catalog, or registry events.
 
-Date and clock-time range APIs remain unimplemented; numeric ranges do not add relative-time,
-weekday, or plural-range APIs.
+### Date And Clock Ranges
+
+The DOM-free root exports these native range operations, with matching Translator methods that omit
+the explicit language argument:
+
+```ts
+function formatDateRange(
+  start: Date | string | CalendarDate,
+  end: Date | string | CalendarDate,
+  language: string,
+  options?: DateFormatOptions,
+): string;
+function formatDateRangeToParts(
+  start: Date | string | CalendarDate,
+  end: Date | string | CalendarDate,
+  language: string,
+  options?: DateFormatOptions,
+): Intl.DateTimeRangeFormatPart[];
+function formatTimeRange(
+  start: string | ClockTime,
+  end: string | ClockTime,
+  language: string,
+  options?: TimeFormatOptions,
+): string;
+function formatTimeRangeToParts(
+  start: string | ClockTime,
+  end: string | ClockTime,
+  language: string,
+  options?: TimeFormatOptions,
+): Intl.DateTimeRangeFormatPart[];
+```
+
+```ts
+import { formatDateRange, formatTimeRangeToParts } from "@unilarva/translator";
+
+formatDateRange("2026-09-30", { year: 2026, month: 10, day: 2 }, "en-GB");
+formatTimeRangeToParts("09:30", "10:45:00", "fi-FI"); // Both endpoints show seconds by default.
+translator.formatDateRange("2026-09-30", "2026-10-02", { dateStyle: "long" });
+translator.formatDateRangeToParts(
+  new Date("2026-03-08T06:30:00Z"),
+  new Date("2026-03-08T08:30:00Z"),
+  {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "America/New_York",
+  },
+);
+translator.formatTimeRange("09:30", "10:45", { timeStyle: "short", language: "en-US" });
+translator.formatTimeRangeToParts({ hour: 9, minute: 30, second: 0 }, "10:45");
+```
+
+Date endpoints must both be calendar-only inputs (strict `YYYY-MM-DD` strings and integer
+`{ year, month, day }` records may mix), or both be valid Date instants, including cross-realm Dates.
+Mixing a calendar-only endpoint with an instant throws `RangeError`, even though the broad input
+union permits it statically. Calendar pairs force UTC and ignore supplied zones. Instant pairs use
+the explicit or host zone, including its DST rules; both native timestamps are detached before
+options are read or coerced. Numeric year/month/day defaults are applied once to the pair unless
+`dateStyle` or `timeStyle` is set. Reversed date pairs throw `RangeError` consistently, including on
+newer hosts that accept reversed native date ranges. Equal endpoints retain native range behavior,
+not a package-selected single-value fallback.
+
+Clock endpoints accept strict `HH:MM` / `HH:MM:SS` strings or integer `{ hour, minute, second? }`
+records and share one synthetic UTC day, without time-zone conversion or overnight inference.
+A start later than the end throws `RangeError`, including when only seconds differ. For cross-midnight
+intervals, supply real Date instants to the date-range API instead. Without `timeStyle`, default
+hour/minute fields include seconds if **either** endpoint supplied them, including explicit zero;
+an omitted or `undefined` second does not request seconds. Defined allowed components override
+defaults; `undefined` components do not erase them. `short` / `medium` styles replace the defaults.
+All single-clock date/zone prohibitions apply, including inherited or explicitly undefined fields
+and long/full styles. Clock range strings and parts expose no synthetic calendar fields or zones.
+
+Both families reuse their single-value option types and bounded date-time formatter cache; options
+default to `{}`. Object-valued option coercions bypass caching, as do instant pairs with no explicit
+zone, so changing host zones remain observable. Standalone helpers use the explicit locale and
+methods the active locale, unless `options.language` overrides it; translation fallback is not used.
+
+Range-parts arrays and records are fresh, mutable, caller-owned native results, preserving order,
+literal text, and `source` (`startRange`, `endRange`, `shared`). Formatters alone are cached, never
+endpoints or results. No string splitting, filtering, concatenation, HTML, DOM markers, or state
+events are added. Equal date/clock ranges can retain native string-versus-parts whitespace
+differences; do not normalize returned literals or assume joining parts reproduces strings byte-for-byte.
+
+Each call checks only its requested `Intl.DateTimeFormat.prototype.formatRange` or
+`formatRangeToParts` method, at call time, never at import. A missing method throws an actionable
+`TypeError` naming that method and requiring a supporting runtime or consumer-provided polyfill.
+Imports, ordinary formatting, single-value parts, numeric ranges, and the other supported range
+operation remain available. No fallback or polyfill is installed by the package.
+
+Standalone helpers throw without logging. Methods log original failures safely as
+`date-range-format-failed`, `date-range-format-to-parts-failed`, `time-range-format-failed`, or
+`time-range-format-to-parts-failed`, then rethrow the identical error, including option coercion,
+invalid endpoint pairs and unavailable native methods. Logger failures cannot replace that error.
+Ranges do not add relative-time, weekday, or plural-range APIs.
 
 ### Relative Time And Plural Selection
 
@@ -1765,6 +1857,9 @@ The root entry exports:
 - `formatNumberRange()`, `formatNumberRangeToParts()`, `formatCurrencyRange()`, and
   `formatCurrencyRangeToParts()`, also available as Translator methods, returning native range
   strings or mutable `Intl.NumberRangeFormatPart[]` with source metadata;
+- `formatDateRange()`, `formatDateRangeToParts()`, `formatTimeRange()`, and
+  `formatTimeRangeToParts()`, also available as Translator methods, returning native range strings
+  or mutable `Intl.DateTimeRangeFormatPart[]` with source metadata;
 - `RelativeTimeFormatOptions` and `PluralSelectOptions`, combining their native `Intl` options
   with `LocaleFormatOptions`;
 - `parseRichText()` and `translateRichText()`;

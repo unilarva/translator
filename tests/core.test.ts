@@ -2062,7 +2062,7 @@ test("core types compile without ambient types and retain native abort/fetch com
     "bin/tsc",
   );
   try {
-    const imports = `import type { TranslationAbortSignal, TranslatorFetch, LanguageChangeEvent, LanguageRegistryChangeEvent } from ${JSON.stringify(types)};\nimport { Translator, formatNumberToParts, formatCurrencyToParts, formatRelativeTimeToParts, formatDateToParts, formatTimeToParts, formatWeekdayToParts, formatNumberRange, formatNumberRangeToParts, formatCurrencyRange, formatCurrencyRangeToParts, type CurrencyFormatOptions, type CalendarDate, type ClockTime, type DateFormatOptions, type TimeFormatOptions, type WeekdayFormatOptions } from ${JSON.stringify(index)};\n`;
+    const imports = `import type { TranslationAbortSignal, TranslatorFetch, LanguageChangeEvent, LanguageRegistryChangeEvent } from ${JSON.stringify(types)};\nimport { Translator, formatNumberToParts, formatCurrencyToParts, formatRelativeTimeToParts, formatDateToParts, formatTimeToParts, formatWeekdayToParts, formatNumberRange, formatNumberRangeToParts, formatCurrencyRange, formatCurrencyRangeToParts, formatDateRange, formatDateRangeToParts, formatTimeRange, formatTimeRangeToParts, type CurrencyFormatOptions, type CalendarDate, type ClockTime, type DateFormatOptions, type TimeFormatOptions, type WeekdayFormatOptions } from ${JSON.stringify(index)};\n`;
     await writeFile(
       join(directory, "clean.ts"),
       `${imports}
@@ -2172,6 +2172,83 @@ test("core types compile without ambient types and retain native abort/fetch com
       const dateOptions: DateFormatOptions = { language: "fi", dateStyle: "long", timeZone: "UTC" };
       const timeOptions: TimeFormatOptions = { language: "fi", timeStyle: "medium", hour12: false };
       const weekdayOptions: WeekdayFormatOptions = { language: "fi", width: "short" };
+      const dateRange: string = formatDateRange(calendar, "2026-10-04", "en", dateOptions);
+      const timeRange: string = formatTimeRange("13:00", clock, "en", timeOptions);
+      const dateRangeParts: Intl.DateTimeRangeFormatPart[] = formatDateRangeToParts(new Date(), new Date(), "en", dateOptions);
+      const timeRangeParts: Intl.DateTimeRangeFormatPart[] = formatTimeRangeToParts(clock, "14:00", "en", timeOptions);
+      const methodDateRange: string = translator.formatDateRange(new Date(), new Date(), dateOptions);
+      const methodTimeRange: string = translator.formatTimeRange(clock, "14:00", timeOptions);
+      const methodDateRangeParts: Intl.DateTimeRangeFormatPart[] = translator.formatDateRangeToParts("2026-10-03", calendar, dateOptions);
+      const methodTimeRangeParts: Intl.DateTimeRangeFormatPart[] = translator.formatTimeRangeToParts("13:00", clock, timeOptions);
+      for (const parts of [dateRangeParts, timeRangeParts, methodDateRangeParts, methodTimeRangeParts]) {
+        parts.push({ type: "literal", value: "consumer-owned", source: "shared" });
+        parts[0]!.value = "consumer-owned";
+        const source: "startRange" | "endRange" | "shared" = parts[0]!.source;
+        parts[0]!.source = "endRange";
+        // @ts-expect-error Native source metadata is a closed union.
+        parts[0]!.source = "start";
+      }
+      for (const format of [formatDateRange, formatDateRangeToParts]) {
+        format(calendar, "2026-10-04", "en");
+        format(new Date(), new Date(), "en");
+        // The input union permits mixed pairs; runtime validation rejects them.
+        format(new Date(), calendar, "en");
+        format("2026-10-03", new Date(), "en");
+        // @ts-expect-error Date start endpoints do not accept timestamps.
+        format(0, calendar, "en");
+        // @ts-expect-error Date end endpoints require complete calendar records.
+        format(calendar, { year: 2026, month: 10 }, "en");
+      }
+      for (const format of [translator.formatDateRange, translator.formatDateRangeToParts]) {
+        format(calendar, "2026-10-04");
+        format(new Date(), new Date());
+        format(calendar, new Date());
+        format(new Date(), "2026-10-04");
+        // @ts-expect-error Date start records require a day.
+        format({ year: 2026, month: 10 }, calendar);
+        // @ts-expect-error Date end endpoints do not accept timestamps.
+        format(calendar, 0);
+      }
+      for (const format of [formatTimeRange, formatTimeRangeToParts]) {
+        format("13:00", clock, "en");
+        format(clock, "14:00", "en");
+        // @ts-expect-error Clock start endpoints are not Date instants.
+        format(new Date(), clock, "en");
+        // @ts-expect-error Clock end records require minutes.
+        format(clock, { hour: 14 }, "en");
+        // @ts-expect-error Clock options forbid zones.
+        format(clock, clock, "en", { timeZone: "UTC" });
+        // @ts-expect-error Long clock styles expose a zone.
+        format(clock, clock, "en", { timeStyle: "long" });
+      }
+      for (const format of [translator.formatTimeRange, translator.formatTimeRangeToParts]) {
+        format(clock, "14:00");
+        format("13:00", clock);
+        // @ts-expect-error Clock start records require minutes.
+        format({ hour: 13 }, clock);
+        // @ts-expect-error Clock end endpoints are not Date instants.
+        format(clock, new Date());
+        // @ts-expect-error Clock options forbid calendar fields.
+        format(clock, clock, { year: "numeric" });
+        // @ts-expect-error Full clock styles expose a zone.
+        format(clock, clock, { timeStyle: "full" });
+      }
+      // @ts-expect-error Date range strings are not parts arrays.
+      const wrongDateRange: Intl.DateTimeRangeFormatPart[] = formatDateRange(calendar, calendar, "en");
+      // @ts-expect-error Clock range strings are not parts arrays.
+      const wrongTimeRange: Intl.DateTimeRangeFormatPart[] = formatTimeRange(clock, clock, "en");
+      // @ts-expect-error Date range parts are not strings.
+      const wrongDateRangeParts: string = formatDateRangeToParts(calendar, calendar, "en");
+      // @ts-expect-error Clock range parts are not strings.
+      const wrongTimeRangeParts: string = formatTimeRangeToParts(clock, clock, "en");
+      // @ts-expect-error Date method strings are not parts arrays.
+      const wrongMethodDateRange: Intl.DateTimeRangeFormatPart[] = translator.formatDateRange(calendar, calendar);
+      // @ts-expect-error Clock method strings are not parts arrays.
+      const wrongMethodTimeRange: Intl.DateTimeRangeFormatPart[] = translator.formatTimeRange(clock, clock);
+      // @ts-expect-error Date method parts are not strings.
+      const wrongMethodDateRangeParts: string = translator.formatDateRangeToParts(calendar, calendar);
+      // @ts-expect-error Clock method parts are not strings.
+      const wrongMethodTimeRangeParts: string = translator.formatTimeRangeToParts(clock, clock);
       const date: Intl.DateTimeFormatPart[] = formatDateToParts(calendar, "en", dateOptions);
       const time: Intl.DateTimeFormatPart[] = formatTimeToParts(clock, "en", timeOptions);
       const weekday: Intl.DateTimeFormatPart[] = formatWeekdayToParts(0, "en", weekdayOptions);

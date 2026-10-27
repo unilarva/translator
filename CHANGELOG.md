@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-10-27
+
 - **Breaking:** Make all four `formatDate*` APIs calendar-only, rejecting Date instants and clock/zone
   options. Move instants to `formatDateTime*` with a required explicit `timeZone` and medium-date/
   short-time defaults unless styles or display components are defined. Weekdays also reject zone

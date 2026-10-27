@@ -21,6 +21,8 @@ updates. Package internals and contributor workflows are documented in
   - [Browser Language Example](#browser-language-example)
 - [Loading Files](#loading-files)
 - [Locale Formatting](#locale-formatting)
+  - [Temporal API Migration](#temporal-api-migration)
+  - [Datetime Instants](#datetime-instants)
   - [Structured Formatting Parts](#structured-formatting-parts)
   - [Number And Currency Ranges](#number-and-currency-ranges)
   - [Date And Clock Ranges](#date-and-clock-ranges)
@@ -836,13 +838,14 @@ translator.formatCurrency(12, {
   minimumFractionDigits: 0,
 });
 translator.formatDate("2026-09-30", { year: "2-digit" });
+translator.formatDateTime(new Date("2026-09-30T23:30:00Z"), { timeZone: "Europe/Helsinki" });
 translator.formatTime("09:30");
 translator.formatWeekday(0, { width: "short" }); // Monday = 0
 translator.formatRelativeTime(-1, "day");
 translator.selectPlural(2); // A plural-category label, not a phrase.
 ```
 
-The root entry also exports standalone `formatNumber()`, `formatCurrency()`, `formatDate()`,
+The root entry also exports standalone `formatNumber()`, `formatCurrency()`, `formatDate()`, `formatDateTime()`,
 `formatTime()`, `formatWeekday()`, `formatRelativeTime()`, and `selectPlural()` functions for code
 that does not need a translator instance. They take the language as an explicit argument.
 
@@ -858,7 +861,14 @@ Contracts are intentionally narrow:
 
 - Currency identifiers are required and use three ASCII letters, normalized to uppercase. Validation
   follows `Intl` syntax, not membership in a maintained ISO currency registry.
-- Date strings use `YYYY-MM-DD` and are formatted as calendar dates without local time-zone shifts.
+- Calendar inputs are strict Gregorian `YYYY-MM-DD` strings or integer `{ year, month, day }`
+  records (`CalendarDate`), never Date objects. They preserve calendar fields without zone conversion.
+- `DateFormatOptions` allows native date styles/components, calendar and numbering-system controls,
+  and `language`. Numeric year/month/day defaults apply unless `dateStyle` is defined; allowed
+  components override those defaults. Native style/component incompatibility errors remain native.
+- Calendar options forbid `timeStyle`, `hour`, `minute`, `second`, `fractionalSecondDigits`,
+  `dayPeriod`, `hour12`, `hourCycle`, `timeZone`, and `timeZoneName`. Forbidden properties are rejected
+  even if inherited, non-enumerable, or explicitly `undefined`; they are not silently ignored.
 - Time strings use `HH:MM` or `HH:MM:SS` and are formatted as clock times without local time-zone
   shifts.
 - Clock-time options cannot request date components or a time-zone label; no synthetic date or zone
@@ -866,22 +876,140 @@ Contracts are intentionally narrow:
 - Clock `timeStyle` accepts only `short` or `medium`; `long` and `full` implicitly include a zone and
   are rejected.
 - Supplying seconds, including `:00`, preserves seconds in the default formatted output.
-- Weekdays are integers from Monday `0` through Sunday `6`.
+- Weekdays are integers from Monday `0` through Sunday `6`. `WeekdayFormatOptions` explicitly forbids
+  `timeZone` and `timeZoneName`, including inherited or explicitly `undefined` properties.
 - Standard `dateStyle` and `timeStyle` options replace the corresponding default fields.
 
-`formatDate()` also accepts a `Date` instant, including a Date from another realm. For instants, the
-host time zone is used unless `timeZone` is supplied. Calendar strings and `{ year, month, day }`
-values instead force UTC to preserve the supplied date, overriding any `timeZone` option. Requesting
-time components for a calendar value formats its synthetic midnight, not a real-world instant.
+These restrictions apply to strings, parts, and ranges, including matching Translator methods.
+Forbidden properties are modeled in public types, but optional-property TypeScript settings can
+permit explicit `undefined`; runtime enforcement is definitive. Calendar UTC anchoring is private,
+not a caller-selectable zone or a way to expose fabricated midnight.
 
 Invalid inputs and invalid recognized `Intl` option values throw. Unknown option names can be ignored
 by `Intl`; the adapters do not validate every future platform option. Translator methods log failures
 first when a logger is configured, then rethrow them. Exact locale output depends on the host's
 `Intl` implementation and installed locale data.
 
+### Temporal API Migration
+
+**Breaking:** The four `formatDate*` functions and matching Translator methods are calendar-only.
+Replace Date-based calls with the corresponding `formatDateTime*` operation and explicitly choose
+an output zone. No deprecated overloads, aliases, or mixed-input dispatch remain.
+
+```ts
+const instant = new Date("2026-09-30T23:30:00Z");
+// Before: translator.formatDate(instant, { dateStyle: "medium", timeStyle: "short" });
+translator.formatDateTime(instant, { timeZone: "Europe/Helsinki" });
+// Before: translator.formatDateRange(startInstant, endInstant, oldOptions);
+translator.formatDateTimeRange(instant, new Date("2026-10-01T01:00:00Z"), {
+  timeZone: "Europe/Helsinki",
+});
+// Calendars stay calendars; remove formerly ignored zone/time options.
+translator.formatDate("2026-09-30", { dateStyle: "medium" });
+```
+
+The same rename applies to `formatDateToParts()` and `formatDateRangeToParts()` when their inputs
+are instants. Audit intent first: a legacy Date used merely as a calendar surrogate must be recovered
+according to its original storage/editing contract. Neither local getters nor
+`toISOString().slice(0, 10)` is universally safe. Do not turn calendar strings into `new Date()` as
+a generic migration. Calendar calls must remove forbidden options, even properties set to
+`undefined`; weekday calls must remove `timeZone` and `timeZoneName` too.
+
+If host-zone presentation is genuinely intended, the application can resolve its chosen zone and
+pass it explicitly. Do not automatically replace an intended location's zone with the viewer's zone.
+These changes add no DOM markers and do not alter existing clock formatting or DOM binding behavior.
+
+### Datetime Instants
+
+The root exports four Date-only helpers and `DateTimeFormatOptions`; matching Translator methods
+omit the explicit language parameter but still require options:
+
+```ts
+type DateTimeFormatOptions = Omit<Intl.DateTimeFormatOptions, "timeZone"> &
+  LocaleFormatOptions & { timeZone: string };
+
+function formatDateTime(value: Date, language: string, options: DateTimeFormatOptions): string;
+function formatDateTimeToParts(
+  value: Date,
+  language: string,
+  options: DateTimeFormatOptions,
+): Intl.DateTimeFormatPart[];
+function formatDateTimeRange(
+  start: Date,
+  end: Date,
+  language: string,
+  options: DateTimeFormatOptions,
+): string;
+function formatDateTimeRangeToParts(
+  start: Date,
+  end: Date,
+  language: string,
+  options: DateTimeFormatOptions,
+): Intl.DateTimeRangeFormatPart[];
+```
+
+Inputs must be valid native-slot Date objects, including cross-realm Dates, not strings, numeric
+timestamps, calendar records, or forged lookalikes. Invalid Dates throw `RangeError`; non-Date inputs
+throw `TypeError`. Overridden `getTime()`, `valueOf()`, or coercion methods are not used. Ranges reject
+reversed instants explicitly; equal endpoints retain native range behavior.
+
+Every call requires options with a primitive, nonblank `timeZone` string. Missing, `undefined`,
+`null`, blank, boxed, or other nonstring zone values throw `RangeError`; Intl validates the supplied
+identifier. `UTC` and other host-supported identifiers are accepted. Prefer a named IANA zone for
+locations with seasonal offsets, rather than a permanent numeric offset. There is no implicit host,
+UTC, or translator-wide zone default. A Date stores an instant, not its source offset/zone; an input
+timestamp's offset identifies the instant but does not choose the output zone. Language selection
+does not select a geographical zone.
+
+With no defined styles or display components, the defaults are `dateStyle: "medium"` and
+`timeStyle: "short"`. A defined `dateStyle` or `timeStyle`, or any defined `weekday`, `era`, `year`,
+`month`, `day`, `hour`, `minute`, `second`, `fractionalSecondDigits`, `dayPeriod`, or `timeZoneName`,
+replaces both implicit styles. Undefined fields do not erase defaults. Modifiers alone (`language`,
+`localeMatcher`, `formatMatcher`, `calendar`, `numberingSystem`, `hour12`, `hourCycle`, and the
+required `timeZone`) preserve the defaults. Native style/component incompatibilities still throw.
+Date-only and time-only projections remain explicitly zoned instant operations:
+
+```ts
+import { formatDateTime, formatDateTimeRangeToParts } from "@unilarva/translator";
+
+const instant = new Date("2026-09-30T23:30:00Z");
+formatDateTime(instant, "en-GB", { timeZone: "Europe/Helsinki" });
+translator.formatDateTimeToParts(instant, { timeZone: "UTC", dateStyle: "long" });
+translator.formatDateTime(instant, {
+  timeZone: "Europe/Helsinki",
+  hour: "numeric",
+  minute: "2-digit",
+});
+formatDateTimeRangeToParts(instant, new Date("2026-10-01T01:00:00Z"), "fi-FI", {
+  timeZone: "Europe/Helsinki",
+});
+```
+
+Input and option observation order is deliberate: detach the Date timestamp (both timestamps for a
+range) before reading options; read and validate `timeZone` once; read `language`; snapshot the
+remaining enumerable own string-keyed options in enumeration order, excluding `timeZone` and
+`language`; then prepare defaults and allow Intl option coercion. Inherited and non-enumerable zone
+properties are honored, and the same captured primitive zone is used for Intl and cache preparation.
+Other inherited/non-enumerable Intl options are not copied into that snapshot. Later getters or
+coercions cannot mutate the detached input instants used for the call. Object-valued native options
+bypass cache reuse so observable coercion is not hidden.
+
+Each helper delegates to the corresponding native `format`, `formatToParts`, `formatRange`, or
+`formatRangeToParts` operation, without synthesized output or a polyfill. Parts are fresh, mutable,
+caller-owned native arrays/records, preserving literals, order, and range `source` metadata. Strings
+and joined parts may differ in native whitespace. Each datetime call checks only its requested
+native method at call time; missing support throws an actionable `TypeError` without affecting
+imports or other operations. Locale override and no-state-event rules match other formatters.
+
+Standalone helpers throw without logging. Translator methods safely log the original error as
+`datetime-format-failed`, `datetime-format-to-parts-failed`, `datetime-range-format-failed`, or
+`datetime-range-format-to-parts-failed`, then rethrow the identical error even if logging fails.
+Calendar failures retain the existing date diagnostics. There are no datetime DOM markers.
+
 ### Structured Formatting Parts
 
-The root entry exports six native parts helpers alongside the existing string formatters:
+The root entry exports these native parts helpers alongside the string formatters (datetime parts
+are described [above](#datetime-instants)):
 
 ```ts
 function formatNumberToParts(
@@ -901,7 +1029,7 @@ function formatRelativeTimeToParts(
   options?: RelativeTimeFormatOptions,
 ): Intl.RelativeTimeFormatPart[];
 function formatDateToParts(
-  value: Date | string | CalendarDate,
+  value: string | CalendarDate,
   language: string,
   options?: DateFormatOptions,
 ): Intl.DateTimeFormatPart[];
@@ -964,12 +1092,11 @@ codes, and recognized options throw under the same strict/native rules as string
 native option/coercion errors propagate unchanged. Newer TypeScript Intl options are passed through,
 but declarations do not guarantee that every host implements them.
 
-Date, clock-time, and weekday parts reuse their string counterparts' strict parsing and option
-types; their options default to `{}`. Date parts accept strict `YYYY-MM-DD` strings,
-`{ year, month, day }` calendar records, or `Date` instants, including cross-realm Dates. Calendar
-values force UTC and ignore `timeZone`; requested time components describe synthetic midnight.
-Instants use the explicit `timeZone` or the host zone. Numeric year/month/day defaults are merged
-unless `dateStyle` or `timeStyle` is supplied.
+Calendar, clock-time, and weekday parts reuse their string counterparts' strict parsing and option
+types; their options default to `{}`. Date parts accept only strict `YYYY-MM-DD` strings or
+`{ year, month, day }` calendar records, rejecting Date objects and all clock/zone options. Numeric
+year/month/day defaults are merged unless `dateStyle` is defined. Instants belong to
+`formatDateTimeToParts()` with required explicit-zone options.
 
 Clock parts accept strict `HH:MM` / `HH:MM:SS` strings or `{ hour, minute, second? }` records, without
 time-zone conversion. Unless `timeStyle` is supplied, hour/minute defaults include seconds only when
@@ -978,7 +1105,8 @@ defaults. Only `short` and `medium` styles are supported. The `dateStyle`, `era`
 `day`, `weekday`, `timeZone`, and `timeZoneName` options are forbidden even when explicitly
 `undefined`; `long` and `full` time styles are rejected. Neither synthetic calendar fields nor a
 time-zone label appear in clock parts. Weekday parts accept only integers from Monday `0` through
-Sunday `6`, with `width: "long"` by default or `"short"` / `"narrow"` on request.
+Sunday `6`, with `width: "long"` by default or `"short"` / `"narrow"` on request. They reject
+`timeZone` and `timeZoneName`, even inherited or explicitly `undefined` properties.
 
 Results are fresh, mutable, caller-owned native arrays with fresh part records, not frozen snapshots.
 The package caches formatters, never result arrays or records; mutating a result cannot affect later
@@ -991,14 +1119,14 @@ Joining date, clock-time, or weekday parts is therefore not guaranteed to reprod
 string helper byte-for-byte; use the native parts as returned rather than normalizing their literals.
 
 Parts are structured text, not HTML or a safe-HTML representation. Consumers own rendering and
-context-appropriate escaping. These APIs add no DOM markers or automatic UI updates. All six
-single-value parts APIs and number/currency/date/clock ranges are available. Existing string return
+context-appropriate escaping. These APIs add no DOM markers or automatic UI updates. All seven
+single-value parts APIs and number/currency/calendar/datetime/clock ranges are available. Existing string return
 types are unchanged.
 
 Each parts call checks only its required native method at call time:
 `Intl.NumberFormat.prototype.formatToParts` for number/currency,
 `Intl.RelativeTimeFormat.prototype.formatToParts` for relative time, or
-`Intl.DateTimeFormat.prototype.formatToParts` for date/clock-time/weekday. If unavailable, it throws an
+`Intl.DateTimeFormat.prototype.formatToParts` for calendar/datetime/clock-time/weekday. If unavailable, it throws an
 actionable `TypeError` identifying the missing method and the need for a supporting runtime or a
 consumer-provided polyfill. Imports and unrelated operations do not probe or require that method;
 there is no string-splitting fallback or package-installed polyfill.
@@ -1098,14 +1226,14 @@ the explicit language argument:
 
 ```ts
 function formatDateRange(
-  start: Date | string | CalendarDate,
-  end: Date | string | CalendarDate,
+  start: string | CalendarDate,
+  end: string | CalendarDate,
   language: string,
   options?: DateFormatOptions,
 ): string;
 function formatDateRangeToParts(
-  start: Date | string | CalendarDate,
-  end: Date | string | CalendarDate,
+  start: string | CalendarDate,
+  end: string | CalendarDate,
   language: string,
   options?: DateFormatOptions,
 ): Intl.DateTimeRangeFormatPart[];
@@ -1129,7 +1257,7 @@ import { formatDateRange, formatTimeRangeToParts } from "@unilarva/translator";
 formatDateRange("2026-09-30", { year: 2026, month: 10, day: 2 }, "en-GB");
 formatTimeRangeToParts("09:30", "10:45:00", "fi-FI"); // Both endpoints show seconds by default.
 translator.formatDateRange("2026-09-30", "2026-10-02", { dateStyle: "long" });
-translator.formatDateRangeToParts(
+translator.formatDateTimeRangeToParts(
   new Date("2026-03-08T06:30:00Z"),
   new Date("2026-03-08T08:30:00Z"),
   {
@@ -1143,19 +1271,20 @@ translator.formatTimeRangeToParts({ hour: 9, minute: 30, second: 0 }, "10:45");
 ```
 
 Date endpoints must both be calendar-only inputs (strict `YYYY-MM-DD` strings and integer
-`{ year, month, day }` records may mix), or both be valid Date instants, including cross-realm Dates.
-Mixing a calendar-only endpoint with an instant throws `RangeError`, even though the broad input
-union permits it statically. Calendar pairs force UTC and ignore supplied zones. Instant pairs use
-the explicit or host zone, including its DST rules; both native timestamps are detached before
-options are read or coerced. Numeric year/month/day defaults are applied once to the pair unless
-`dateStyle` or `timeStyle` is set. Reversed date pairs throw `RangeError` consistently, including on
+`{ year, month, day }` records may mix). Every Date endpoint is rejected, including a Date paired
+with a calendar. All calendar clock/zone option prohibitions apply. Numeric year/month/day defaults
+are applied once to the pair unless `dateStyle` is defined. Use the separate
+[datetime range APIs](#datetime-instants) for Date pairs with an explicit output zone.
+Reversed date pairs throw `RangeError` consistently, including on
 newer hosts that accept reversed native date ranges. Equal endpoints retain native range behavior,
 not a package-selected single-value fallback.
 
 Clock endpoints accept strict `HH:MM` / `HH:MM:SS` strings or integer `{ hour, minute, second? }`
 records and share one synthetic UTC day, without time-zone conversion or overnight inference.
 A start later than the end throws `RangeError`, including when only seconds differ. For cross-midnight
-intervals, supply real Date instants to the date-range API instead. Without `timeStyle`, default
+dated intervals, supply real Date instants to `formatDateTimeRange()` with an explicit zone instead.
+Recurring overnight schedules require application-owned day-aware presentation, not fabricated
+instants to bypass clock ordering. Without `timeStyle`, default
 hour/minute fields include seconds if **either** endpoint supplied them, including explicit zero;
 an omitted or `undefined` second does not request seconds. Defined allowed components override
 defaults; `undefined` components do not erase them. `short` / `medium` styles replace the defaults.
@@ -1163,8 +1292,7 @@ All single-clock date/zone prohibitions apply, including inherited or explicitly
 and long/full styles. Clock range strings and parts expose no synthetic calendar fields or zones.
 
 Both families reuse their single-value option types and bounded date-time formatter cache; options
-default to `{}`. Object-valued option coercions bypass caching, as do instant pairs with no explicit
-zone, so changing host zones remain observable. Standalone helpers use the explicit locale and
+default to `{}`. Object-valued option coercions bypass caching. Standalone helpers use the explicit locale and
 methods the active locale, unless `options.language` overrides it; translation fallback is not used.
 
 Range-parts arrays and records are fresh, mutable, caller-owned native results, preserving order,
@@ -1652,7 +1780,9 @@ unsigned decimal digits from `0` through `20` (leading zeros are allowed); blank
 whitespace, signs, exponents, and hexadecimal notation are invalid. This conservative DOM-marker range
 is narrower than options supported by some newer host `Intl` implementations.
 
-There are no built-in relative-time or plural-selection markers. Call the core helpers from
+There are no built-in range, datetime-instant, relative-time, or plural-selection markers. The
+calendar/instant API split does not add markers or change existing single-value DOM behavior.
+Call the core helpers from
 application code; application-owned rendering and update scheduling remain explicit.
 
 ## Semantic Rich Translations
@@ -1860,6 +1990,9 @@ The root entry exports:
 - `formatDateRange()`, `formatDateRangeToParts()`, `formatTimeRange()`, and
   `formatTimeRangeToParts()`, also available as Translator methods, returning native range strings
   or mutable `Intl.DateTimeRangeFormatPart[]` with source metadata;
+- `formatDateTime()`, `formatDateTimeToParts()`, `formatDateTimeRange()`, and
+  `formatDateTimeRangeToParts()`, also available as Translator methods, for Date instants with
+  required `DateTimeFormatOptions` containing an explicit `timeZone`;
 - `RelativeTimeFormatOptions` and `PluralSelectOptions`, combining their native `Intl` options
   with `LocaleFormatOptions`;
 - `parseRichText()` and `translateRichText()`;

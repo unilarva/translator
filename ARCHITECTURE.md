@@ -130,12 +130,13 @@ syntax cannot diverge.
 
 ### `src/intl.ts`
 
-Owns pure, DOM-free `Intl` adapters. Calendar and clock inputs preserve their supplied fields through
-UTC-based formatting; Date objects separately represent instants with consumer-selected or host
-time zones. Clock-only options must not expose their synthetic date or zone. Reuse formatter instances
-through bounded caches keyed by canonical locale and effective primitive options; bypass caching when
-option coercion or the host
-time zone can remain observable between calls.
+Owns pure, DOM-free `Intl` adapters with four explicit temporal families. Calendar `formatDate*`
+APIs accept only strings/CalendarDate records; clock APIs accept strings/ClockTime records; weekday
+APIs accept Monday-zero indices. These preserve fields using private UTC anchors, not zone
+conversion. Date-object-only `formatDateTime*` APIs require an explicit primitive output zone for every
+call, with no host/UTC or translator-wide default. Keep the breaking split strict, with no legacy
+overloads, aliases, or mixed-input dispatch. Reuse bounded caches keyed by canonical locale and
+effective primitive options; bypass caching when observable option coercion makes reuse unsafe.
 
 Relative-time formatting and plural-category selection are thin adapters over
 `Intl.RelativeTimeFormat` and `Intl.PluralRules`. Their root-exported option types intersect native
@@ -157,8 +158,8 @@ message keys from categories must align the rule language with the resolved mess
 ordinary translation fallback does not guarantee that alignment.
 
 `formatNumberToParts()`, `formatCurrencyToParts()`, `formatRelativeTimeToParts()`, `formatDateToParts()`,
-`formatTimeToParts()`, and `formatWeekdayToParts()` expose native `formatToParts` results through root
-exports and matching Translator methods. The latter three return `Intl.DateTimeFormatPart[]`. Reuse
+`formatDateTimeToParts()`, `formatTimeToParts()`, and `formatWeekdayToParts()` expose native `formatToParts` results through root
+exports and matching Translator methods. The temporal helpers return `Intl.DateTimeFormatPart[]`. Reuse
 existing family-specific option types, strict numeric validation, locale/default rules, currency style
 and uppercase code normalization. Preserve native relative-time unit/option reads rather than
 homogenizing them with number option snapshots. Share bounded formatter caches with string calls
@@ -167,16 +168,37 @@ mutable, caller-owned native results, not frozen snapshots. Preserve native orde
 relative-time literal parts may lack `unit`. Do not tokenize strings, generate HTML, claim safe HTML,
 or add DOM markers. Existing string methods retain their return types.
 
-Date, clock-time, and weekday string/parts calls share parsing, effective option preparation, and
-the bounded date-time formatter cache. Preserve calendar-only UTC anchoring versus Date instant
-zones, detaching cross-realm Dates through native slots before option coercion can mutate inputs.
-Instants without an explicit zone continue bypassing caching because the host zone can change.
-Retain numeric date defaults unless a date/time style is set, clock seconds-presence defaults
-(including explicit zero), all forbidden clock fields even when explicitly undefined, short/medium
-clock styles only, and Monday `0` through Sunday `6` numbering with default long weekday width.
-Clock parts must never expose synthetic date fields or a zone label. Compare results against the
-native parts operation, not joined string output: DateTimeFormat string and parts literals can
-differ in whitespace.
+Calendar, datetime, clock-time, and weekday calls share the bounded date-time formatter cache and
+family-specific preparation. Calendar inputs retain strict Gregorian validation and numeric
+year/month/day defaults unless `dateStyle` is defined. Date objects are rejected. DateFormatOptions
+forbids `timeStyle`, `hour`, `minute`, `second`, `fractionalSecondDigits`, `dayPeriod`, `hour12`,
+`hourCycle`, `timeZone`, and `timeZoneName`; runtime checks must detect property presence, including
+inherited/non-enumerable and explicitly undefined fields. Weekday options likewise explicitly forbid
+`timeZone` and `timeZoneName`. Types model prohibitions, but cannot promise rejection of undefined
+under every consumer's optional-property settings. Never expose calendar synthetic midnight.
+
+The four datetime helpers and matching methods require DateTimeFormatOptions with `timeZone: string`.
+Validate genuine native Date slots (including cross-realm Dates), ignore overridden getTime/valueOf
+and coercion methods, and detach timestamps before observing options. Detach both endpoints for
+ranges. Then read/validate the zone exactly once, read language, and snapshot other enumerable own
+string-keyed options in enumeration order, excluding zone/language, before defaults and Intl
+coercion. Honor inherited/non-enumerable zone values by retaining the same captured primitive string
+for effective Intl options and cache keys; do not drop it during spreading. Other inherited or
+non-enumerable Intl options are not copied. Reject missing/nonstring/blank zones; Intl validates
+supported identifiers. Object-valued zone coercion is not supported, while other native option
+coercions retain cache-bypass behavior. No implicit-host-zone cache branch remains.
+
+Datetime defaults are medium date plus short time only when neither style nor any display component
+is defined. Display components are weekday, era, year, month, day, hour, minute, second,
+fractionalSecondDigits, dayPeriod, and timeZoneName. Defined styles/components replace both implicit
+styles; undefined fields cannot erase defaults. Locale/calendar/numbering/hour-cycle/format-matching
+modifiers alone retain defaults. Preserve native style/component errors and date-only/time-only
+projections of explicitly zoned instants, not package-added calendar/clock coercion.
+
+Keep clock seconds-presence defaults (including explicit zero), existing forbidden fields even when
+inherited/undefined, short/medium styles only, and Monday `0` through Sunday `6` with default long
+weekday width. Clock parts must never expose synthetic dates/zones. Compare each native operation
+independently: DateTimeFormat string and parts literals can differ in whitespace.
 
 `formatNumberRange()`, `formatNumberRangeToParts()`, `formatCurrencyRange()`, and
 `formatCurrencyRangeToParts()` share existing number/currency option preparation and bounded
@@ -189,19 +211,22 @@ equal endpoints, or concatenate formatted values. Range-parts calls return direc
 `Intl.NumberRangeFormatPart[]` and records, preserving native order, literals, `approximatelySign`,
 and `source` (`startRange`, `endRange`, `shared`). Cache formatters, never endpoints or results.
 
-`formatDateRange()`, `formatDateRangeToParts()`, `formatTimeRange()`, and
+`formatDateRange()`, `formatDateRangeToParts()`, `formatDateTimeRange()`,
+`formatDateTimeRangeToParts()`, `formatTimeRange()`, and
 `formatTimeRangeToParts()` expose date-time native ranges with matching Translator methods and
 `Intl.DateTimeRangeFormatPart[]` for range parts. Share date defaults, clock restrictions,
 effective options and the bounded date-time cache with single-value strings and parts. Accept two
-calendar endpoints (strings/records may mix), forcing UTC, or two Date instants, using explicit/host
-zones. Reject mixed endpoint kinds even though the broad public union permits them. Read both native
-Date slots before option getters or coercions can mutate caller Dates; never cache endpoint values.
+calendar endpoints (strings/records may mix) in date ranges, or two Date instants with a mandatory
+explicit zone in datetime ranges. Reject Date inputs to calendar APIs and all non-Date inputs to
+datetime APIs in both types and runtime checks. Read both native Date slots before option getters
+or coercions can mutate caller Dates; never cache endpoint values.
 Reject reversed date pairs explicitly: Node 24.22.1 accepts native reversed dates, so relying on
 native rejection alone would make the ordered pair contract host-dependent. Equal dates retain
-native range behavior. Host-zone instant pairs continue bypassing caching.
+native range behavior.
 
 Clock pairs share one synthetic UTC day. Explicitly reject reversed clocks without overnight
-inference; consumers needing cross-midnight intervals supply Date instants to date ranges. Without
+inference; actual dated cross-midnight intervals use Date instants in explicitly zoned datetime
+ranges. Recurring overnight schedules remain application-owned rather than fabricated instants. Without
 a style, include default seconds when either endpoint supplied them (including zero); defined
 components override defaults, undefined components cannot erase them. Reuse all single-clock
 prohibitions, including inherited/undefined fields and long/full styles. Test native clock ranges
@@ -213,10 +238,10 @@ caching, DOM markers, relative-time/weekday ranges or plural-range selection is 
 Check the requested native `formatToParts`, `formatRange`, or `formatRangeToParts` method only at
 call time, never during module import.
 A missing method throws an actionable `TypeError` naming the method and requiring a supporting host
-or consumer-provided polyfill. Date, clock-time, and weekday parts require
+or consumer-provided polyfill. Calendar, datetime, clock-time, and weekday parts require
 `Intl.DateTimeFormat.prototype.formatToParts`. Numeric range strings require only
 `Intl.NumberFormat.prototype.formatRange`; numeric range parts require only
-`Intl.NumberFormat.prototype.formatRangeToParts`. Date/clock range strings and parts require only
+`Intl.NumberFormat.prototype.formatRangeToParts`. Calendar/datetime/clock range strings and parts require only
 the corresponding `Intl.DateTimeFormat.prototype.formatRange` or `formatRangeToParts` method.
 Name the exact missing method in the error;
 absence of one range method must not disable the other or ordinary string/single-value parts calls.
@@ -531,6 +556,9 @@ identity even when logging fails. Date/clock methods use `date-range-format-fail
 `date-range-format-to-parts-failed`, `time-range-format-failed`, and
 `time-range-format-to-parts-failed` through the same adapter. Range calls emit no language, catalog,
 or registry events.
+Datetime methods use `datetime-format-failed`, `datetime-format-to-parts-failed`,
+`datetime-range-format-failed`, and `datetime-range-format-to-parts-failed`, preserving original
+error identity even when logging fails. Calendar methods retain existing date event names.
 Preserve existing diagnostic events and detail shapes for existing string methods.
 
 Subscriber and logger callbacks run synchronously and are never awaited. Observe accidental returned
@@ -568,12 +596,15 @@ reuse, mutable ownership, no state events, and missing-method isolation across i
 formatting, single-value parts, and the other range operation. Verify all four helpers and matching
 methods in source and clean installed-consumer runtime/type fixtures.
 
-Date/clock range coverage compares native strings and parts with the same effective options and
-detached endpoints. Cover calendar/string mixtures, mixed-kind rejection, reversed and equal pairs,
-cross-realm Dates, both endpoint detachments before option getters/coercions, explicit/host-zone
-and DST behavior, pair-aware seconds, forbidden options, no overnight inference, and synthetic
+Calendar/datetime/clock range coverage compares native strings and parts with the same effective
+options and detached endpoints. Cover calendar string/record mixtures, Date-to-calendar and
+non-Date-to-datetime rejection, reversed/equal pairs, cross-realm Dates, invalid/forged Dates,
+single/both endpoint detachment before option getters/coercions, zone read exactly once before
+language and the remaining snapshot, inherited/non-enumerable zone retention, missing/invalid zones,
+defaults versus modifier-only and projection options, explicit-zone DST/midnight/year boundaries,
+pair-aware seconds, forbidden own/inherited/undefined options, no overnight inference, and synthetic
 date/zone leakage across locales, components, styles and endpoints. Check mutable ownership, native
-source metadata, shared caches, unsafe-coercion/host-zone bypasses, locale/state invariants and
+source metadata, shared caches, unsafe-coercion bypasses, host-TZ independence with an explicit zone, locale/state invariants and
 original error identity. Source and installed fixtures cover every helper/method and remove each
 date-time range method before import to verify independent call-time diagnostics. CI runs the full
 gate on minimum/release Node; browser Intl smoke coverage must be verified separately or recorded as

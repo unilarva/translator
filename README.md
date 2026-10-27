@@ -41,8 +41,9 @@ servers, workers, and command-line tools; browser integration is isolated in
   configurable missing-value behavior, and strict `Intl` helpers for formatting, relative time,
   and plural-category selection keep lookup and formatting rules explicit. Number, currency, date,
   clock-time, weekday, and relative-time parts support consumer-controlled rendering without parsing
-  formatted strings. Native number, currency, date, and clock-time ranges include strings and
-  source-tagged parts.
+  formatted strings. Calendar dates and clock times preserve fields; Date instants require an
+  explicit output time zone through the separate datetime APIs. Native number, currency, calendar,
+  datetime, and clock-time ranges include strings and source-tagged parts.
 - **Scoped UIs and synchronized language controls.** Bind a document or subtree, use independent
   translators for previews, and connect existing native selects or details dropdowns to an observable
   language registry. Direction synchronization is opt-in; styling and persistence stay application-owned.
@@ -57,6 +58,12 @@ servers, workers, and command-line tools; browser integration is isolated in
 
 > **Pre-1.0 status:** Public APIs and bundle contracts can change between minor releases. Pin the
 > version and review the [changelog](./CHANGELOG.md) before upgrading.
+
+> **Breaking temporal API change:** All four `formatDate*` helpers and Translator methods now accept
+> only calendar strings/records and date-only options. Move Date instant calls to the corresponding
+> `formatDateTime*` API with required `{ timeZone: "Europe/Helsinki" }` options. Calendar calls must
+> remove clock/zone options; weekdays also reject zone options. There are no mixed-input compatibility
+> overloads. See [temporal migration](./USAGE.md#temporal-api-migration).
 
 ## Guides
 
@@ -76,10 +83,11 @@ servers, workers, and command-line tools; browser integration is isolated in
 - Single-value parts calls require the corresponding native `Intl` `formatToParts` method. Missing
   methods produce actionable call-time errors; the package does not install polyfills.
 - Ranges require the requested `formatRange` or `formatRangeToParts` method on `Intl.NumberFormat`
-  (number/currency) or `Intl.DateTimeFormat` (date/clock-time). Missing methods produce actionable
+  (number/currency) or `Intl.DateTimeFormat` (calendar/datetime/clock-time). Missing methods produce actionable
   call-time errors; imports and unrelated formatting remain available. See
   [numeric ranges](./USAGE.md#number-and-currency-ranges) and
-  [date and clock ranges](./USAGE.md#date-and-clock-ranges) for endpoint rules.
+  [date and clock ranges](./USAGE.md#date-and-clock-ranges) and
+  [datetime instants](./USAGE.md#datetime-instants) for endpoint rules.
 - A browser DOM only when using `@unilarva/translator/dom`; the root entry has no DOM requirement.
 
 | Import                              | Purpose                                                            |

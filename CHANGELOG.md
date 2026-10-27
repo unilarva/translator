@@ -2,13 +2,16 @@
 
 ## Unreleased
 
-- Add native structured formatting parts for numbers, currencies, relative times, dates, clock times,
-  and weekdays, through standalone helpers and matching Translator methods. Results are fresh,
-  caller-owned native parts; existing formatting defaults and behavior remain unchanged.
-- Add native number, currency, date, and clock-time ranges, returning strings or source-tagged parts.
-  Date ranges distinguish calendar dates from instants; clock ranges use same-day ordering and
-  pair-aware seconds defaults. Unsupported native operations fail at call time without affecting
-  imports or unrelated formatting.
+- **Breaking:** Restrict all four `formatDate*` APIs to calendar strings/records and date-only options;
+  Date inputs and clock/zone options are rejected. Move instants to the four new `formatDateTime*`
+  APIs with required explicit `timeZone` options and medium-date/short-time defaults unless styles
+  or display components are defined. Weekday APIs also reject zone options. See the usage guide
+  for migration; no compatibility overloads are retained.
+- Add native structured parts for numbers, currencies, relative times, calendars, datetimes, clocks,
+  and weekdays, plus number/currency/calendar/datetime/clock ranges, through helpers and Translator
+  methods. Parts are fresh and caller-owned; range parts preserve native source metadata. Clock ranges use
+  same-day ordering and pair-aware seconds. Unsupported native operations fail only when called,
+  without affecting imports or unrelated formatting. No new DOM markers or weekday ranges are added.
 - Require TypeScript `ES2023` libraries, or `ES2022` plus `ES2023.Intl`, instead of ES2022 alone.
   Root declarations remain DOM-free; the JavaScript target stays ES2022 and the Node minimum stays
   `22.13.0`.

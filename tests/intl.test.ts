@@ -21,6 +21,10 @@ import {
   formatDateRange,
   formatDateRangeToParts,
   formatDateToParts,
+  formatDateTime,
+  formatDateTimeToParts,
+  formatDateTimeRange,
+  formatDateTimeRangeToParts,
   formatNumberRange,
   formatNumberRangeToParts,
   formatNumberToParts,
@@ -31,6 +35,9 @@ import {
   formatTimeToParts,
   formatWeekdayToParts,
   type DateFormatOptions,
+  type DateTimeFormatOptions,
+  type CalendarDate,
+  type WeekdayFormatOptions,
   type NumberFormatOptions,
   selectPlural,
   type PluralSelectOptions,
@@ -49,7 +56,7 @@ import {
 } from "../src/intl.ts";
 import { asElement, asParentNode } from "./dom-test-utils.ts";
 
-test("date ranges preserve native UTC calendar pairs, instant zones, DST and equal endpoints", () => {
+test("calendar and datetime ranges preserve native calendars, explicit zones, DST and equality", () => {
   const first = new Date("2026-03-08T06:30:00Z");
   const last = new Date("2026-03-08T08:30:00Z");
   for (const language of ["en-x-drnative", "fi-x-drnative", "ar-x-drnative", "ja-x-drnative"]) {
@@ -57,14 +64,13 @@ test("date ranges preserve native UTC calendar pairs, instant zones, DST and equ
       {},
       { month: "long", day: "2-digit" },
       { dateStyle: "full" },
-      { dateStyle: "medium", timeStyle: "short" },
       { year: undefined, month: "short" },
     ] as DateFormatOptions[]) {
       for (const end of ["2026-03-08", { year: 2026, month: 3, day: 10 }]) {
         const date =
           typeof end === "string" ? new Date(`${end}T00:00:00Z`) : new Date("2026-03-10T00:00:00Z");
         const effective = {
-          ...(options.dateStyle === undefined && options.timeStyle === undefined
+          ...(options.dateStyle === undefined
             ? ({ year: "numeric", month: "numeric", day: "numeric" } as const)
             : {}),
           ...options,
@@ -73,14 +79,11 @@ test("date ranges preserve native UTC calendar pairs, instant zones, DST and equ
         const native = new Intl.DateTimeFormat(language, effective);
         const start = new Date("2026-03-08T00:00:00Z");
         assert.equal(
-          formatDateRange("2026-03-08", end, language, { ...options, timeZone: "Invalid/Zone" }),
+          formatDateRange("2026-03-08", end, language, options),
           native.formatRange(start, date),
         );
         assert.deepEqual(
-          formatDateRangeToParts("2026-03-08", end, language, {
-            ...options,
-            timeZone: "America/Los_Angeles",
-          }),
+          formatDateRangeToParts("2026-03-08", end, language, options),
           native.formatRangeToParts(start, date),
         );
         assert.equal(formatDateRange(end, end, language, options), native.formatRange(date, date));
@@ -90,15 +93,599 @@ test("date ranges preserve native UTC calendar pairs, instant zones, DST and equ
       const options = { dateStyle: "long", timeStyle: "long", timeZone } as const;
       const native = new Intl.DateTimeFormat(language, options);
       assert.equal(
-        formatDateRange(first, last, language, options),
+        formatDateTimeRange(first, last, language, options),
         native.formatRange(first, last),
       );
       assert.deepEqual(
-        formatDateRangeToParts(first, last, language, options),
+        formatDateTimeRangeToParts(first, last, language, options),
         native.formatRangeToParts(first, last),
       );
     }
   }
+});
+
+test("all calendar APIs reject Dates and forbidden option presence, including inherited undefined", () => {
+  const translator = new Translator();
+  const calls = [
+    (value: string | CalendarDate, options?: DateFormatOptions) => formatDate(value, "en", options),
+    (value: string | CalendarDate, options?: DateFormatOptions) =>
+      formatDateToParts(value, "en", options),
+    (value: string | CalendarDate, options?: DateFormatOptions) =>
+      formatDateRange(value, "2026-10-02", "en", options),
+    (value: string | CalendarDate, options?: DateFormatOptions) =>
+      formatDateRangeToParts("2026-09-30", value, "en", options),
+    (value: string | CalendarDate, options?: DateFormatOptions) =>
+      translator.formatDate(value, options),
+    (value: string | CalendarDate, options?: DateFormatOptions) =>
+      translator.formatDateToParts(value, options),
+    (value: string | CalendarDate, options?: DateFormatOptions) =>
+      translator.formatDateRange(value, "2026-10-02", options),
+    (value: string | CalendarDate, options?: DateFormatOptions) =>
+      translator.formatDateRangeToParts("2026-09-30", value, options),
+  ];
+  for (const call of calls) {
+    for (const date of [
+      new Date(),
+      new Date(NaN),
+      runInNewContext("new Date()"),
+      runInNewContext("new Date(NaN)"),
+    ])
+      assert.throws(() => call(date as unknown as CalendarDate), RangeError);
+    for (const field of [
+      "timeStyle",
+      "hour",
+      "minute",
+      "second",
+      "fractionalSecondDigits",
+      "dayPeriod",
+      "hour12",
+      "hourCycle",
+      "timeZone",
+      "timeZoneName",
+    ]) {
+      for (const options of [
+        { [field]: undefined },
+        { [field]: "long" },
+        Object.create({ [field]: undefined }),
+        Object.defineProperty({}, field, { value: undefined }),
+      ])
+        assert.throws(
+          () => call("2026-09-30", options as DateFormatOptions),
+          new RegExp(`does not support ${field}`),
+        );
+    }
+  }
+  for (const format of [formatWeekday, formatWeekdayToParts]) {
+    for (const field of ["timeZone", "timeZoneName"]) {
+      for (const options of [
+        { [field]: undefined },
+        { [field]: "UTC" },
+        Object.create({ [field]: undefined }),
+        Object.defineProperty({}, field, { value: undefined }),
+      ])
+        assert.throws(
+          () => format(0, "en", options as WeekdayFormatOptions),
+          new RegExp(`does not support ${field}`),
+        );
+    }
+  }
+  for (const call of [
+    (options: WeekdayFormatOptions) => translator.formatWeekday(0, options),
+    (options: WeekdayFormatOptions) => translator.formatWeekdayToParts(0, options),
+  ]) {
+    for (const field of ["timeZone", "timeZoneName"])
+      assert.throws(
+        () => call(Object.create({ [field]: undefined })),
+        new RegExp(`does not support ${field}`),
+      );
+  }
+});
+
+test("datetime APIs require native Date slots and an explicit primitive nonblank zone", () => {
+  const date = new Date("2026-09-30T23:30:00Z");
+  const translator = new Translator();
+  const calls = [
+    (value: Date, options: DateTimeFormatOptions) => formatDateTime(value, "en", options),
+    (value: Date, options: DateTimeFormatOptions) => formatDateTimeToParts(value, "en", options),
+    (value: Date, options: DateTimeFormatOptions) =>
+      formatDateTimeRange(value, date, "en", options),
+    (value: Date, options: DateTimeFormatOptions) =>
+      formatDateTimeRangeToParts(date, value, "en", options),
+    (value: Date, options: DateTimeFormatOptions) => translator.formatDateTime(value, options),
+    (value: Date, options: DateTimeFormatOptions) =>
+      translator.formatDateTimeToParts(value, options),
+    (value: Date, options: DateTimeFormatOptions) =>
+      translator.formatDateTimeRange(value, date, options),
+    (value: Date, options: DateTimeFormatOptions) =>
+      translator.formatDateTimeRangeToParts(date, value, options),
+  ];
+  for (const call of calls) {
+    for (const value of [
+      "2026-09-30",
+      "2026-09-30T23:30:00Z",
+      0,
+      null,
+      undefined,
+      { year: 2026, month: 9, day: 30 },
+      { [Symbol.toStringTag]: "Date", getTime: () => 0 },
+      new Proxy(date, {}),
+    ])
+      assert.throws(() => call(value as Date, { timeZone: "UTC" }), TypeError);
+    for (const invalid of [new Date(NaN), runInNewContext("new Date(NaN)")])
+      assert.throws(() => call(invalid as Date, { timeZone: "UTC" }), RangeError);
+    for (const options of [
+      undefined,
+      {},
+      { timeZone: undefined },
+      { timeZone: null },
+      { timeZone: "" },
+      { timeZone: " \t" },
+      { timeZone: 0 },
+      { timeZone: new String("UTC") },
+      {
+        timeZone: {
+          toString() {
+            throw new Error("Must not coerce zone");
+          },
+        },
+      },
+      { timeZone: "Not/AZone" },
+    ])
+      assert.throws(() => call(date, options as DateTimeFormatOptions), RangeError);
+  }
+  for (const format of [formatDateTimeRange, formatDateTimeRangeToParts]) {
+    assert.throws(() => format(date, new Date(0), "en", { timeZone: "UTC" }), RangeError);
+    assert.throws(
+      () => format(date, "2026-10-01" as unknown as Date, "en", { timeZone: "UTC" }),
+      TypeError,
+    );
+    assert.throws(
+      () => format("2026-09-30" as unknown as Date, date, "en", { timeZone: "UTC" }),
+      TypeError,
+    );
+  }
+});
+
+test("datetime defaults, projections, boundaries and equal ranges match each native operation", () => {
+  const choices: Omit<DateTimeFormatOptions, "timeZone">[] = [
+    {},
+    { dateStyle: undefined, timeStyle: undefined, hour: undefined },
+    { calendar: "gregory", numberingSystem: "latn", hourCycle: "h23" },
+    { hour12: true, localeMatcher: "lookup", formatMatcher: "basic" },
+    { dateStyle: "long" },
+    { timeStyle: "short" },
+    { dateStyle: "full", timeStyle: "long" },
+    { era: "short" },
+    { year: "numeric" },
+    { month: "long" },
+    { day: "2-digit" },
+    { weekday: "long" },
+    { hour: "numeric" },
+    { minute: "numeric" },
+    { second: "numeric" },
+    { fractionalSecondDigits: 3 },
+    { dayPeriod: "long" },
+    { timeZoneName: "short" },
+  ];
+  const display = [
+    "dateStyle",
+    "timeStyle",
+    "era",
+    "year",
+    "month",
+    "day",
+    "weekday",
+    "hour",
+    "minute",
+    "second",
+    "fractionalSecondDigits",
+    "dayPeriod",
+    "timeZoneName",
+  ];
+  for (const language of ["en-GB", "fi", "ar", "ja-JP-u-ca-japanese"]) {
+    for (const timeZone of ["UTC", "Europe/Helsinki", "America/New_York"]) {
+      for (const [first, last] of [
+        ["2026-03-08T06:30:00Z", "2026-03-08T08:30:00Z"],
+        ["2026-11-01T05:30:00Z", "2026-11-01T07:30:00Z"],
+        ["2026-12-31T23:30:00Z", "2027-01-01T01:30:00Z"],
+        ["2026-09-30T23:30:00Z", "2026-09-30T23:30:00Z"],
+      ]) {
+        const start = new Date(first);
+        const end = new Date(last);
+        for (const options of choices) {
+          const defined = Object.fromEntries(
+            Object.entries(options).filter(([, value]) => value !== undefined),
+          );
+          const native = new Intl.DateTimeFormat(language, {
+            ...(display.some(key => defined[key] !== undefined)
+              ? {}
+              : { dateStyle: "medium", timeStyle: "short" }),
+            ...defined,
+            timeZone,
+          });
+          const provided = Object.freeze({ ...options, timeZone });
+          assert.equal(formatDateTime(start, language, provided), native.format(start));
+          assert.deepEqual(
+            formatDateTimeToParts(start, language, provided),
+            native.formatToParts(start),
+          );
+          assert.equal(
+            formatDateTimeRange(start, end, language, provided),
+            native.formatRange(start, end),
+          );
+          assert.deepEqual(
+            formatDateTimeRangeToParts(start, end, language, provided),
+            native.formatRangeToParts(start, end),
+          );
+        }
+      }
+    }
+  }
+  for (const format of [formatDateTime, formatDateTimeToParts]) {
+    assert.throws(
+      () => format(new Date(), "en", { timeZone: "UTC", dateStyle: "long", hour: "numeric" }),
+      TypeError,
+    );
+    assert.throws(() => format(new Date(), "bad!", { timeZone: "UTC" }), RangeError);
+  }
+  for (const format of [formatDateTimeRange, formatDateTimeRangeToParts])
+    assert.throws(
+      () =>
+        format(new Date(0), new Date(1), "en", {
+          timeZone: "UTC",
+          timeStyle: "short",
+          year: "numeric",
+        }),
+      TypeError,
+    );
+});
+
+test("datetime snapshots detach inputs before zone, language and own enumerable option reads", () => {
+  for (const format of [
+    formatDateTime,
+    formatDateTimeToParts,
+    formatDateTimeRange,
+    formatDateTimeRangeToParts,
+  ]) {
+    for (const zoneKind of ["own", "inherited", "nonenumerable"]) {
+      const startTime = Date.UTC(2026, 8, 30, 23, 30);
+      const endTime = Date.UTC(2026, 9, 2, 1, 30);
+      const start = runInNewContext(`new Date(${startTime})`) as Date;
+      const end = new Date(endTime);
+      const reads: string[] = [];
+      const mutate = () => {
+        start.setTime(NaN);
+        end.setTime(0);
+      };
+      const zone = {
+        enumerable: zoneKind !== "nonenumerable",
+        get() {
+          reads.push("zone");
+          mutate();
+          return reads.filter(read => read === "zone").length === 1
+            ? "Europe/Helsinki"
+            : "Invalid/Zone";
+        },
+      };
+      const options = Object.create(
+        zoneKind === "inherited" ? Object.defineProperty({}, "timeZone", zone) : null,
+      );
+      Object.defineProperties(options, {
+        ...(zoneKind === "inherited" ? {} : { timeZone: zone }),
+        language: {
+          enumerable: true,
+          get() {
+            reads.push("language");
+            return " en_GB ";
+          },
+        },
+        dateStyle: {
+          enumerable: true,
+          get() {
+            reads.push("dateStyle");
+            return {
+              toString() {
+                reads.push("coerce");
+                return "long";
+              },
+            };
+          },
+        },
+        ignored: {
+          enumerable: true,
+          get() {
+            reads.push("ignored");
+            return true;
+          },
+        },
+        timeStyle: {
+          get() {
+            throw new Error("Nonenumerable native options are not snapshotted");
+          },
+        },
+      });
+      const native = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/Helsinki",
+        dateStyle: "long",
+      });
+      const actual =
+        format === formatDateTime
+          ? formatDateTime(start, "bad!", options)
+          : format === formatDateTimeToParts
+            ? formatDateTimeToParts(start, "bad!", options)
+            : format === formatDateTimeRange
+              ? formatDateTimeRange(start, end, "bad!", options)
+              : formatDateTimeRangeToParts(start, end, "bad!", options);
+      const expected =
+        format === formatDateTime
+          ? native.format(startTime)
+          : format === formatDateTimeToParts
+            ? native.formatToParts(startTime)
+            : format === formatDateTimeRange
+              ? native.formatRange(startTime, endTime)
+              : native.formatRangeToParts(startTime, endTime);
+      assert.deepEqual(actual, expected);
+      assert.deepEqual(reads, ["zone", "language", "dateStyle", "ignored", "coerce"]);
+      assert.ok(Number.isNaN(Date.prototype.getTime.call(start)));
+      assert.equal(Date.prototype.getTime.call(end), 0);
+    }
+  }
+  const error = new Error("Must not access options before invalid input rejection");
+  const options = {
+    get timeZone(): string {
+      throw error;
+    },
+  };
+  for (const format of [formatDateTime, formatDateTimeToParts])
+    assert.throws(() => format(new Date(NaN), "en", options), RangeError);
+  for (const format of [formatDateTimeRange, formatDateTimeRangeToParts])
+    assert.throws(() => format(new Date(), new Date(NaN), "en", options), RangeError);
+  const invalidZone = {
+    timeZone: " ",
+    get language(): string {
+      throw error;
+    },
+    get dateStyle(): "long" {
+      throw error;
+    },
+  };
+  for (const format of [formatDateTime, formatDateTimeToParts])
+    assert.throws(() => format(new Date(), "en", invalidZone), RangeError);
+  for (const format of [formatDateTimeRange, formatDateTimeRangeToParts])
+    assert.throws(() => format(new Date(0), new Date(1), "en", invalidZone), RangeError);
+});
+
+test("datetime facade preserves locale policy, input ownership and fresh mutable native metadata", () => {
+  const translator = new Translator({ language: "fi", fallbackLanguage: "ja" });
+  translator.setTranslation("fallback", { ja: "Fallback only" });
+  const events: unknown[] = [];
+  translator.subscribe(event => events.push(event));
+  translator.subscribeCatalog(event => events.push(event));
+  translator.subscribeLanguages(event => events.push(event));
+  const start = Object.freeze(new Date("2026-09-30T23:30:00Z"));
+  const end = Object.freeze(new Date("2026-10-02T01:30:00Z"));
+  for (const language of [undefined, " en_GB "]) {
+    const options = Object.freeze({ language, timeZone: "Europe/Helsinki" });
+    const tag = language === undefined ? "fi" : "en-GB";
+    assert.equal(translator.formatDateTime(start, options), formatDateTime(start, tag, options));
+    assert.deepEqual(
+      translator.formatDateTimeToParts(start, options),
+      formatDateTimeToParts(start, tag, options),
+    );
+    assert.equal(
+      translator.formatDateTimeRange(start, end, options),
+      formatDateTimeRange(start, end, tag, options),
+    );
+    assert.deepEqual(
+      translator.formatDateTimeRangeToParts(start, end, options),
+      formatDateTimeRangeToParts(start, end, tag, options),
+    );
+  }
+  for (const call of [
+    () => formatDateTimeToParts(start, "en", { timeZone: "UTC" }),
+    () => translator.formatDateTimeToParts(start, { timeZone: "UTC" }),
+  ]) {
+    const parts = call();
+    const expected = structuredClone(parts);
+    assert.notEqual(parts, call());
+    for (let index = 0; index < parts.length; index++) {
+      assert.notEqual(parts[index], call()[index]);
+      parts[index].value = "changed";
+    }
+    parts.splice(0);
+    assert.deepEqual(call(), expected);
+  }
+  for (const call of [
+    () => formatDateTimeRangeToParts(start, end, "en", { timeZone: "UTC" }),
+    () => translator.formatDateTimeRangeToParts(start, end, { timeZone: "UTC" }),
+  ]) {
+    const parts = call();
+    const expected = structuredClone(parts);
+    assert.deepEqual(
+      new Set(parts.map(part => part.source)),
+      new Set(["startRange", "endRange", "shared"]),
+    );
+    assert.notEqual(parts, call());
+    for (let index = 0; index < parts.length; index++) {
+      assert.notEqual(parts[index], call()[index]);
+      parts[index].source = "shared";
+      parts[index].value = "changed";
+    }
+    parts.splice(0);
+    assert.deepEqual(call(), expected);
+  }
+  assert.equal(start.toISOString(), "2026-09-30T23:30:00.000Z");
+  assert.equal(end.toISOString(), "2026-10-02T01:30:00.000Z");
+  assert.equal(translator.getLanguage(), "fi");
+  assert.equal(translator.translateKey("fallback"), "Fallback only");
+  assert.deepEqual(events, []);
+});
+
+test("datetime diagnostics preserve original getter, coercion and native errors despite failing loggers", t => {
+  const entries: TranslatorLogEntry[] = [];
+  const translator = new Translator({
+    language: "fi",
+    logger(entry) {
+      entries.push(entry);
+      throw new Error("Logger failed");
+    },
+  });
+  const events: unknown[] = [];
+  translator.subscribe(event => events.push(event));
+  translator.subscribeCatalog(event => events.push(event));
+  translator.subscribeLanguages(event => events.push(event));
+  const start = new Date("2026-09-30T23:30:00Z");
+  const end = new Date("2026-10-02T01:30:00Z");
+  const methods = [
+    (options: DateTimeFormatOptions) => translator.formatDateTime(start, options),
+    (options: DateTimeFormatOptions) => translator.formatDateTimeToParts(start, options),
+    (options: DateTimeFormatOptions) => translator.formatDateTimeRange(start, end, options),
+    (options: DateTimeFormatOptions) => translator.formatDateTimeRangeToParts(start, end, options),
+  ];
+  const standalone = [
+    (options: DateTimeFormatOptions) => formatDateTime(start, "fi", options),
+    (options: DateTimeFormatOptions) => formatDateTimeToParts(start, "fi", options),
+    (options: DateTimeFormatOptions) => formatDateTimeRange(start, end, "fi", options),
+    (options: DateTimeFormatOptions) => formatDateTimeRangeToParts(start, end, "fi", options),
+  ];
+  const diagnostics = [
+    "datetime-format-failed",
+    "datetime-format-to-parts-failed",
+    "datetime-range-format-failed",
+    "datetime-range-format-to-parts-failed",
+  ];
+  const error = new Error("Original datetime failure");
+  for (const options of [
+    {
+      get timeZone(): string {
+        throw error;
+      },
+    },
+    {
+      timeZone: "UTC",
+      get language(): string {
+        throw error;
+      },
+    },
+    {
+      timeZone: "UTC",
+      get dateStyle(): "long" {
+        throw error;
+      },
+    },
+    {
+      timeZone: "UTC",
+      dateStyle: {
+        toString() {
+          throw error;
+        },
+      } as unknown as "long",
+    },
+  ]) {
+    const before = entries.length;
+    for (const call of [...methods, ...standalone])
+      assert.throws(
+        () => call(options),
+        thrown => thrown === error,
+      );
+    assert.deepEqual(
+      entries
+        .slice(before)
+        .map(entry => [entry.component, entry.event, entry.error, entry.details]),
+      diagnostics.map(event => ["intl", event, error, { language: "fi" }]),
+    );
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(Intl.DateTimeFormat.prototype, "format")!;
+  t.after(() => Object.defineProperty(Intl.DateTimeFormat.prototype, "format", descriptor));
+  Object.defineProperty(Intl.DateTimeFormat.prototype, "format", {
+    configurable: true,
+    get() {
+      throw error;
+    },
+  });
+  for (const method of ["formatToParts", "formatRange", "formatRangeToParts"] as const)
+    t.mock.method(Intl.DateTimeFormat.prototype, method, () => {
+      throw error;
+    });
+  const before = entries.length;
+  for (const call of [...methods, ...standalone])
+    assert.throws(
+      () => call({ timeZone: "UTC" }),
+      thrown => thrown === error,
+    );
+  assert.deepEqual(
+    entries.slice(before).map(entry => [entry.event, entry.error]),
+    diagnostics.map(event => [event, error]),
+  );
+  assert.deepEqual(events, []);
+});
+
+test("datetime cache shares primitive snapshots across operations and bypasses unsafe options and oversized keys", t => {
+  const Native = Intl.DateTimeFormat;
+  let constructions = 0;
+  t.mock.method(Intl, "DateTimeFormat", function (...args: ConstructorParameters<typeof Native>) {
+    constructions++;
+    return new Native(...args);
+  });
+  const start = new Date("2026-09-30T23:30:00Z");
+  const end = new Date("2026-10-02T01:30:00Z");
+  const calls = [
+    (options: DateTimeFormatOptions, language = "en-x-dtcache2") =>
+      formatDateTime(start, language, options),
+    (options: DateTimeFormatOptions, language = "en-x-dtcache2") =>
+      formatDateTimeToParts(start, language, options),
+    (options: DateTimeFormatOptions, language = "en-x-dtcache2") =>
+      formatDateTimeRange(start, end, language, options),
+    (options: DateTimeFormatOptions, language = "en-x-dtcache2") =>
+      formatDateTimeRangeToParts(start, end, language, options),
+  ];
+  let zoneReads = 0;
+  const options = {
+    get timeZone() {
+      zoneReads++;
+      return "UTC";
+    },
+  };
+  for (const call of calls) call(options);
+  assert.equal(zoneReads, 4);
+  assert.equal(constructions, 1);
+  calls[0]({ timeZone: "UTC" }, "EN_x_dtcache2");
+  assert.equal(constructions, 1);
+  calls[0]({ timeZone: "Europe/Helsinki" });
+  assert.equal(constructions, 2);
+  let coercions = 0;
+  const dynamic = {
+    timeZone: "UTC",
+    month: {
+      toString() {
+        coercions++;
+        return "long";
+      },
+    } as unknown as "long",
+  };
+  const before = constructions;
+  for (const call of calls) {
+    call(dynamic);
+    call(dynamic);
+  }
+  assert.equal(coercions, 8);
+  assert.equal(constructions - before, 8);
+  for (const ignored of [{}, () => "ignored", Symbol("ignored"), 1n]) {
+    const beforeUnsafe: number = constructions;
+    calls[0]({ timeZone: "UTC", ignored } as DateTimeFormatOptions);
+    calls[0]({ timeZone: "UTC", ignored } as DateTimeFormatOptions);
+    assert.equal(constructions - beforeUnsafe, 2);
+  }
+  const oversized = { timeZone: "UTC", ignored: "x".repeat(5000) };
+  const beforeOversized = constructions;
+  calls[0](oversized);
+  calls[0](oversized);
+  assert.equal(constructions - beforeOversized, 2);
+  calls[0]({ timeZone: "UTC" }, "en-x-dtevict");
+  for (let index = 0; index < 110; index++) calls[0]({ timeZone: "UTC" }, `en-x-dtevict-${index}`);
+  const beforeEvicted = constructions;
+  calls[0]({ timeZone: "UTC" }, "en-x-dtevict");
+  assert.equal(constructions - beforeEvicted, 1);
 });
 
 test("clock ranges match native pair-seconds defaults without synthetic date or zone leakage", () => {
@@ -189,20 +776,25 @@ test("date and clock ranges reject invalid pairs, reversed endpoints and all clo
       { year: 2026, month: 2, day: 29 },
       { [Symbol.toStringTag]: "Date", getTime: () => 0 },
     ]) {
-      assert.throws(() => format(invalid as Date, "2026-03-10", "en"), RangeError);
-      assert.throws(() => format("2026-03-01", invalid as Date, "en"), RangeError);
+      assert.throws(() => format(invalid as CalendarDate, "2026-03-10", "en"), RangeError);
+      assert.throws(() => format("2026-03-01", invalid as CalendarDate, "en"), RangeError);
     }
     const date = new Date("2026-03-01T00:00:00Z");
+    assert.throws(() => format(date as unknown as CalendarDate, "2026-03-10", "en"), RangeError);
     assert.throws(
-      () => format(date, "2026-03-10", "en"),
-      /both be calendar dates or both be Date instants/,
+      () => format({ year: 2026, month: 3, day: 1 }, date as unknown as CalendarDate, "en"),
+      RangeError,
     );
-    assert.throws(() => format({ year: 2026, month: 3, day: 1 }, date, "en"), RangeError);
     assert.throws(() => format("2026-03-10", "2026-03-01", "en"), RangeError);
-    assert.throws(() => format(new Date("2026-03-10"), date, "en"), RangeError);
-    assert.throws(() => format(date, date, "en", { timeZone: "Invalid/Zone" }), RangeError);
-    assert.throws(() => format(date, date, "en", { dateStyle: "long", month: "long" }), TypeError);
-    assert.throws(() => format(date, date, "not_a_locale!"), RangeError);
+    assert.throws(
+      () => format(date as unknown as CalendarDate, date as unknown as CalendarDate, "en"),
+      RangeError,
+    );
+    assert.throws(
+      () => format("2026-03-01", "2026-03-10", "en", { dateStyle: "long", month: "long" }),
+      TypeError,
+    );
+    assert.throws(() => format("2026-03-01", "2026-03-10", "not_a_locale!"), RangeError);
   }
   for (const format of [formatTimeRange, formatTimeRangeToParts]) {
     for (const invalid of [
@@ -255,8 +847,8 @@ test("date and clock ranges reject invalid pairs, reversed endpoints and all clo
   }
 });
 
-test("date ranges detach both native Date slots before option getters and coercions", () => {
-  for (const format of [formatDateRange, formatDateRangeToParts]) {
+test("datetime ranges detach both native Date slots before option getters and coercions", () => {
+  for (const format of [formatDateTimeRange, formatDateTimeRangeToParts]) {
     for (const getter of [false, true]) {
       const startTime = Date.UTC(2026, 8, 30, 0, 30);
       const endTime = Date.UTC(2026, 9, 2, 1, 30);
@@ -272,20 +864,20 @@ test("date ranges detach both native Date slots before option getters and coerci
       const mutate = () => {
         start.setTime(NaN);
         end.setTime(0);
-        return "UTC";
+        return "long" as const;
       };
-      const options: DateFormatOptions = getter
+      const options: DateTimeFormatOptions = getter
         ? {
-            get timeZone() {
+            timeZone: "UTC",
+            get dateStyle() {
               return mutate();
             },
-            dateStyle: "long",
           }
-        : { timeZone: { toString: mutate } as unknown as string, dateStyle: "long" };
+        : { timeZone: "UTC", dateStyle: { toString: mutate } as unknown as "long" };
       const native = new Intl.DateTimeFormat("en", { timeZone: "UTC", dateStyle: "long" });
       assert.deepEqual(
         format(start, end, "en", options),
-        format === formatDateRange
+        format === formatDateTimeRange
           ? native.formatRange(startTime, endTime)
           : native.formatRangeToParts(startTime, endTime),
       );
@@ -343,7 +935,7 @@ test("date and clock range methods preserve locale policy, state, input ownershi
   }
 });
 
-test("date and clock ranges share formatter caches, snapshot options and bypass unsafe/host-zone caching", t => {
+test("date and clock ranges share formatter caches, snapshot options and bypass unsafe coercions", t => {
   const Native = Intl.DateTimeFormat;
   let constructions = 0;
   t.mock.method(Intl, "DateTimeFormat", function (...args: ConstructorParameters<typeof Native>) {
@@ -353,7 +945,7 @@ test("date and clock ranges share formatter caches, snapshot options and bypass 
   formatDate("2026-03-01", "en-x-drcache");
   formatDateToParts("2026-03-01", "en-x-drcache");
   formatDateRange("2026-03-01", "2026-03-10", "EN_x_drcache");
-  formatDateRangeToParts("2026-03-01", "2026-03-10", "en-x-drcache", { timeZone: "Ignored/Zone" });
+  formatDateRangeToParts("2026-03-01", "2026-03-10", "en-x-drcache");
   formatTime("09:05:00", "en-x-drcache");
   formatTimeToParts("09:05:00", "en-x-drcache");
   formatTimeRange("09:05", "10:06:00", "en-x-drcache");
@@ -366,8 +958,14 @@ test("date and clock ranges share formatter caches, snapshot options and bypass 
       return "2-digit";
     },
   };
-  formatDateRange("2026-03-01", "2026-03-10", "en-x-drreads", options);
-  formatDateRangeToParts("2026-03-01", "2026-03-10", "en-x-drreads", options);
+  const dateOptions = {
+    get month(): "long" {
+      reads++;
+      return "long";
+    },
+  };
+  formatDateRange("2026-03-01", "2026-03-10", "en-x-drreads", dateOptions);
+  formatDateRangeToParts("2026-03-01", "2026-03-10", "en-x-drreads", dateOptions);
   formatTimeRange("09:05", "10:06", "en-x-drreads", options);
   formatTimeRangeToParts("09:05", "10:06", "en-x-drreads", options);
   assert.equal(reads, 4);
@@ -380,8 +978,8 @@ test("date and clock ranges share formatter caches, snapshot options and bypass 
   } as unknown as "numeric";
   const before = constructions;
   for (let index = 0; index < 2; index++) {
-    formatDateRange("2026-03-01", "2026-03-10", "en-x-drcoerce", { hour });
-    formatDateRangeToParts("2026-03-01", "2026-03-10", "en-x-drcoerce", { hour });
+    formatDateRange("2026-03-01", "2026-03-10", "en-x-drcoerce", { month: hour });
+    formatDateRangeToParts("2026-03-01", "2026-03-10", "en-x-drcoerce", { month: hour });
     formatTimeRange("09:05", "10:06", "en-x-drcoerce", { hour });
     formatTimeRangeToParts("09:05", "10:06", "en-x-drcoerce", { hour });
   }
@@ -398,20 +996,19 @@ test("date and clock ranges share formatter caches, snapshot options and bypass 
   for (const timeZone of ["UTC", "America/Los_Angeles"]) {
     process.env.TZ = timeZone;
     const native = new Native("en", {
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-      timeZone,
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "Europe/Helsinki",
     });
-    const text = formatDateRange(start, end, "en-x-drhost");
+    const text = formatDateTimeRange(start, end, "en-x-drhost", { timeZone: "Europe/Helsinki" });
     assert.equal(text, native.formatRange(start, end));
     assert.deepEqual(
-      formatDateRangeToParts(start, end, "en-x-drhost"),
+      formatDateTimeRangeToParts(start, end, "en-x-drhost", { timeZone: "Europe/Helsinki" }),
       native.formatRangeToParts(start, end),
     );
     results.push(text);
   }
-  assert.notEqual(results[0], results[1]);
+  assert.equal(results[0], results[1]);
 });
 
 test("date and clock range diagnostics preserve original option/native errors even with failing loggers", t => {
@@ -430,15 +1027,15 @@ test("date and clock range diagnostics preserve original option/native errors ev
     },
   } as unknown as "numeric";
   const methods = [
-    () => translator.formatDateRange("2026-03-01", "2026-03-10", { hour }),
-    () => translator.formatDateRangeToParts("2026-03-01", "2026-03-10", { hour }),
+    () => translator.formatDateRange("2026-03-01", "2026-03-10", { month: hour }),
+    () => translator.formatDateRangeToParts("2026-03-01", "2026-03-10", { month: hour }),
     () => translator.formatTimeRange("09:05", "10:06", { hour }),
     () => translator.formatTimeRangeToParts("09:05", "10:06", { hour }),
   ];
   for (const call of [
     ...methods,
-    () => formatDateRange("2026-03-01", "2026-03-10", "en", { hour }),
-    () => formatDateRangeToParts("2026-03-01", "2026-03-10", "en", { hour }),
+    () => formatDateRange("2026-03-01", "2026-03-10", "en", { month: hour }),
+    () => formatDateRangeToParts("2026-03-01", "2026-03-10", "en", { month: hour }),
     () => formatTimeRange("09:05", "10:06", "en", { hour }),
     () => formatTimeRangeToParts("09:05", "10:06", "en", { hour }),
   ])
@@ -471,6 +1068,42 @@ test("date and clock range diagnostics preserve original option/native errors ev
   );
 });
 
+test("missing datetime string formatting is a named call-time capability on warm caches", async t => {
+  const instant = new Date("2026-09-30T23:30Z");
+  const options = { timeZone: "Europe/Helsinki" };
+  const native = new Intl.DateTimeFormat("en", {
+    ...options,
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  const expected = native.formatToParts(instant);
+  formatDateTime(instant, "en", options);
+  const entries: TranslatorLogEntry[] = [];
+  const translator = new Translator({ language: "en", logger: entry => entries.push(entry) });
+  const descriptor = Object.getOwnPropertyDescriptor(Intl.DateTimeFormat.prototype, "format")!;
+  t.after(() => Object.defineProperty(Intl.DateTimeFormat.prototype, "format", descriptor));
+  Object.defineProperty(Intl.DateTimeFormat.prototype, "format", {
+    configurable: true,
+    value: undefined,
+  });
+  for (const call of [
+    () => formatDateTime(instant, "en", options),
+    () => translator.formatDateTime(instant, options),
+  ]) {
+    assert.throws(call, {
+      name: "TypeError",
+      message:
+        /Intl\.DateTimeFormat\.prototype\.format is unavailable.*supporting runtime.*polyfill/,
+    });
+  }
+  assert.deepEqual(formatDateTimeToParts(instant, "en", options), expected);
+  assert.equal(typeof formatDateTimeRange(instant, instant, "en", options), "string");
+  assert.ok(formatDateTimeRangeToParts(instant, instant, "en", options).length > 0);
+  assert.equal(typeof formatNumber(1, "en"), "string");
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].event, "datetime-format-failed");
+});
+
 test("missing date-time range methods are isolated call-time capabilities on warmed formatters", async t => {
   const prototype = Intl.DateTimeFormat.prototype;
   const methods = ["formatRange", "formatRangeToParts"] as const;
@@ -482,6 +1115,11 @@ test("missing date-time range methods are isolated call-time capabilities on war
   );
   formatDateRange("2026-03-01", "2026-03-10", "en-x-drmiss");
   formatTimeRangeToParts("09:05", "10:06", "en-x-drmiss");
+  const start = new Date("2026-03-01T00:30:00Z");
+  const end = new Date("2026-03-10T01:30:00Z");
+  const options = { timeZone: "UTC" };
+  formatDateTimeRange(start, end, "en-x-drmiss", options);
+  formatDateTimeRangeToParts(start, end, "en-x-drmiss", options);
   const entries: TranslatorLogEntry[] = [];
   const translator = new Translator({
     language: "en-x-drmiss",
@@ -498,12 +1136,16 @@ test("missing date-time range methods are isolated call-time capabilities on war
             () => imported.formatTimeRange("09:05", "10:06", "en-x-drmiss"),
             () => translator.formatDateRange("2026-03-01", "2026-03-10"),
             () => translator.formatTimeRange("09:05", "10:06"),
+            () => imported.formatDateTimeRange(start, end, "en-x-drmiss", options),
+            () => translator.formatDateTimeRange(start, end, options),
           ]
         : [
             () => imported.formatDateRangeToParts("2026-03-01", "2026-03-10", "en-x-drmiss"),
             () => imported.formatTimeRangeToParts("09:05", "10:06", "en-x-drmiss"),
             () => translator.formatDateRangeToParts("2026-03-01", "2026-03-10"),
             () => translator.formatTimeRangeToParts("09:05", "10:06"),
+            () => imported.formatDateTimeRangeToParts(start, end, "en-x-drmiss", options),
+            () => translator.formatDateTimeRangeToParts(start, end, options),
           ];
     for (const call of calls)
       assert.throws(call, {
@@ -513,6 +1155,8 @@ test("missing date-time range methods are isolated call-time capabilities on war
         ),
       });
     assert.equal(typeof imported.formatDate("2026-03-01", "en"), "string");
+    assert.equal(typeof imported.formatDateTime(start, "en", options), "string");
+    assert.ok(imported.formatDateTimeToParts(start, "en", options).length > 0);
     assert.ok(imported.formatTimeToParts("09:05", "en").length > 0);
     assert.ok(imported.formatWeekdayToParts(0, "en").length > 0);
     assert.equal(typeof imported.formatNumberRange(1, 5, "en"), "string");
@@ -521,9 +1165,11 @@ test("missing date-time range methods are isolated call-time capabilities on war
     if (method === "formatRange") {
       assert.ok(translator.formatDateRangeToParts("2026-03-01", "2026-03-10").length > 0);
       assert.ok(translator.formatTimeRangeToParts("09:05", "10:06").length > 0);
+      assert.ok(translator.formatDateTimeRangeToParts(start, end, options).length > 0);
     } else {
       assert.equal(typeof translator.formatDateRange("2026-03-01", "2026-03-10"), "string");
       assert.equal(typeof translator.formatTimeRange("09:05", "10:06"), "string");
+      assert.equal(typeof translator.formatDateTimeRange(start, end, options), "string");
     }
     Object.defineProperty(prototype, method, descriptors[index]);
   }
@@ -532,8 +1178,10 @@ test("missing date-time range methods are isolated call-time capabilities on war
     [
       "date-range-format-failed",
       "time-range-format-failed",
+      "datetime-range-format-failed",
       "date-range-format-to-parts-failed",
       "time-range-format-to-parts-failed",
+      "datetime-range-format-to-parts-failed",
     ],
   );
   assert.ok(entries.every(entry => entry.error instanceof TypeError));
@@ -1067,7 +1715,6 @@ test("parts methods resolve active and explicit locales without changing state o
   const dateOptions = Object.freeze({
     language: " en_GB ",
     dateStyle: "long" as const,
-    timeZone: "Not/AZone",
   });
   const timeOptions = Object.freeze({ language: " en_GB ", hour12: false });
   const weekdayOptions = Object.freeze({ language: " en_GB ", width: "short" as const });
@@ -1354,17 +2001,12 @@ test("missing parts methods fail only on request with actionable diagnostics", a
   assert.ok(entries.every(entry => entry.error instanceof TypeError));
 });
 
-test("date parts match native defaults, styles, UTC calendars and zoned instants", () => {
-  const timestamp = Date.UTC(2026, 8, 30, 0, 30);
-  const instant = new Date(timestamp);
+test("calendar parts match native numeric defaults, styles and UTC calendars", () => {
   const choices: DateFormatOptions[] = [
     {},
     { year: "2-digit", month: "long", weekday: "short" },
     { year: undefined, day: undefined },
     { dateStyle: "full" },
-    { timeStyle: "short" },
-    { dateStyle: "long", timeStyle: "medium" },
-    { hour: "numeric", timeZoneName: "short" },
   ];
   for (const language of [
     "en-x-calparts",
@@ -1374,25 +2016,18 @@ test("date parts match native defaults, styles, UTC calendars and zoned instants
   ]) {
     for (const options of choices) {
       const defaults: DateFormatOptions =
-        options.dateStyle === undefined && options.timeStyle === undefined
+        options.dateStyle === undefined
           ? { year: "numeric", month: "numeric", day: "numeric" }
           : {};
-      for (const timeZone of [undefined, "UTC", "America/Los_Angeles"]) {
-        const provided = { ...options, timeZone };
+      for (const calendar of ["2026-09-30", { year: 2026, month: 9, day: 30 }]) {
         assert.deepEqual(
-          formatDateToParts(instant, language, provided),
-          new Intl.DateTimeFormat(language, { ...defaults, ...provided }).formatToParts(timestamp),
+          formatDateToParts(calendar, language, options),
+          new Intl.DateTimeFormat(language, {
+            ...defaults,
+            ...options,
+            timeZone: "UTC",
+          }).formatToParts(Date.UTC(2026, 8, 30)),
         );
-        for (const calendar of ["2026-09-30", { year: 2026, month: 9, day: 30 }]) {
-          assert.deepEqual(
-            formatDateToParts(calendar, language, provided),
-            new Intl.DateTimeFormat(language, {
-              ...defaults,
-              ...provided,
-              timeZone: "UTC",
-            }).formatToParts(Date.UTC(2026, 8, 30)),
-          );
-        }
       }
     }
   }
@@ -1401,10 +2036,6 @@ test("date parts match native defaults, styles, UTC calendars and zoned instants
   assert.deepEqual(
     formatDateToParts("0099-01-01", "en", { dateStyle: "long" }),
     new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: "UTC" }).formatToParts(ancient),
-  );
-  assert.deepEqual(
-    formatDateToParts("2026-09-30", "en", { timeZone: "Not/AZone" }),
-    formatDateToParts("2026-09-30", "en"),
   );
 });
 
@@ -1497,7 +2128,7 @@ test("calendar parts reject invalid inputs and all forbidden clock options", () 
     { year: 2026, month: 13, day: 1 },
     { year: 2026.5, month: 1, day: 1 },
   ]) {
-    assert.throws(() => formatDateToParts(value, "en"), RangeError);
+    assert.throws(() => formatDateToParts(value as CalendarDate, "en"), RangeError);
   }
   for (const value of [
     "9:05",
@@ -1533,7 +2164,10 @@ test("calendar parts reject invalid inputs and all forbidden clock options", () 
     // @ts-expect-error Long/full clock styles expose a zone.
     assert.throws(() => formatTimeToParts("09:05", "en", { timeStyle }), RangeError);
   }
-  assert.throws(() => formatDateToParts(new Date(), "en", { timeZone: "Not/AZone" }), RangeError);
+  assert.throws(
+    () => formatDateTimeToParts(new Date(), "en", { timeZone: "Not/AZone" }),
+    RangeError,
+  );
   assert.throws(
     () => formatDateToParts("2026-09-30", "en", { dateStyle: "long", year: "numeric" }),
     TypeError,
@@ -1551,7 +2185,7 @@ test("calendar parts reject invalid inputs and all forbidden clock options", () 
   }
 });
 
-test("date parts detach foreign-realm native timestamps before option coercion", () => {
+test("datetime parts detach foreign-realm native timestamps before option coercion", () => {
   const timestamp = Date.UTC(2026, 8, 30, 0, 30);
   for (const date of [new Date(timestamp), runInNewContext(`new Date(${timestamp})`) as Date]) {
     date.getTime = () => {
@@ -1561,17 +2195,20 @@ test("date parts detach foreign-realm native timestamps before option coercion",
     Object.defineProperty(date, Symbol.toPrimitive, { value: () => 0 });
     const options = { timeZone: "America/Los_Angeles", dateStyle: "long" } as const;
     assert.deepEqual(
-      formatDateToParts(date, "en", options),
+      formatDateTimeToParts(date, "en", options),
       new Intl.DateTimeFormat("en", options).formatToParts(timestamp),
     );
-    const timeZone = {
+    const dateStyle = {
       toString() {
         date.setTime(0);
-        return "UTC";
+        return "long";
       },
     };
     assert.deepEqual(
-      formatDateToParts(date, "en", { dateStyle: "long", timeZone: timeZone as unknown as string }),
+      formatDateTimeToParts(date, "en", {
+        dateStyle: dateStyle as unknown as "long",
+        timeZone: "UTC",
+      }),
       new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: "UTC" }).formatToParts(
         timestamp,
       ),
@@ -1579,16 +2216,17 @@ test("date parts detach foreign-realm native timestamps before option coercion",
     assert.equal(Date.prototype.getTime.call(date), 0);
   }
   assert.throws(
-    () => formatDateToParts(runInNewContext("new Date(NaN)"), "en"),
-    /Date must be valid/,
+    () => formatDateTimeToParts(runInNewContext("new Date(NaN)"), "en", { timeZone: "UTC" }),
+    /Date instant must be valid/,
   );
   assert.throws(
     () =>
-      formatDateToParts(
+      formatDateTimeToParts(
         { [Symbol.toStringTag]: "Date", getTime: () => timestamp } as unknown as Date,
         "en",
+        { timeZone: "UTC" },
       ),
-    RangeError,
+    TypeError,
   );
 });
 
@@ -1600,18 +2238,23 @@ test("calendar parts share string caches and preserve snapshots and unsafe coerc
     return new Native(...args);
   });
   formatDate("2026-09-30", "en-x-dtcache");
-  formatDateToParts("2026-10-01", "EN_x_dtcache", { timeZone: "Not/AZone" });
+  formatDateToParts("2026-10-01", "EN_x_dtcache");
   formatTime("09:05", "en-x-dtcache");
   formatTimeToParts("10:06", "en-x-dtcache");
   formatWeekday(0, "en-x-dtcache");
   formatWeekdayToParts(6, "en-x-dtcache");
   assert.equal(constructions, 3);
   const instant = new Date(Date.UTC(2026, 8, 30));
-  formatDateToParts(instant, "en-x-dtcache", { timeZone: "UTC" });
+  formatDateTimeToParts(instant, "en-x-dtcache", {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  });
   assert.equal(constructions, 3);
-  formatDate(instant, "en-x-dtcache");
-  formatDateToParts(instant, "en-x-dtcache");
-  assert.equal(constructions, 5);
+  formatDateTime(instant, "en-x-dtcache", { timeZone: "UTC" });
+  formatDateTimeToParts(instant, "en-x-dtcache", { timeZone: "UTC" });
+  assert.equal(constructions, 4);
   let reads = 0;
   const options = {
     get month(): "long" {
@@ -1646,29 +2289,48 @@ test("calendar parts share string caches and preserve snapshots and unsafe coerc
   assert.equal(coercions, 6);
 });
 
-test("date parts without a zone follow host zone changes instead of a stale formatter", t => {
+test("all explicitly zoned datetime operations are independent of host zone changes", t => {
   const original = process.env.TZ;
   t.after(() => {
     if (original === undefined) delete process.env.TZ;
     else process.env.TZ = original;
   });
   const date = new Date(Date.UTC(2026, 8, 30, 0, 30));
-  const results: Intl.DateTimeFormatPart[][] = [];
-  for (const timeZone of ["UTC", "America/Los_Angeles"]) {
+  const end = new Date(Date.UTC(2026, 9, 2, 1, 30));
+  const options = Object.freeze({ timeZone: "Europe/Helsinki" });
+  const translator = new Translator({ language: "en-x-hostpart" });
+  const results: unknown[] = [];
+  for (const timeZone of ["UTC", "America/Los_Angeles", "Asia/Tokyo"]) {
     process.env.TZ = timeZone;
-    const parts = formatDateToParts(date, "en-x-hostpart");
-    assert.deepEqual(
-      parts,
-      new Intl.DateTimeFormat("en", {
-        year: "numeric",
-        month: "numeric",
-        day: "numeric",
-        timeZone,
-      }).formatToParts(date),
-    );
-    results.push(parts);
+    const native = new Intl.DateTimeFormat("en", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      ...options,
+    });
+    const expected = [
+      native.format(date),
+      native.formatToParts(date),
+      native.formatRange(date, end),
+      native.formatRangeToParts(date, end),
+    ];
+    const actual = [
+      formatDateTime(date, "en-x-hostpart", options),
+      formatDateTimeToParts(date, "en-x-hostpart", options),
+      formatDateTimeRange(date, end, "en-x-hostpart", options),
+      formatDateTimeRangeToParts(date, end, "en-x-hostpart", options),
+    ];
+    const facade = [
+      translator.formatDateTime(date, options),
+      translator.formatDateTimeToParts(date, options),
+      translator.formatDateTimeRange(date, end, options),
+      translator.formatDateTimeRangeToParts(date, end, options),
+    ];
+    assert.deepEqual(actual, expected);
+    assert.deepEqual(facade, expected);
+    results.push(actual);
   }
-  assert.notDeepEqual(results[0], results[1]);
+  assert.deepEqual(results[0], results[1]);
+  assert.deepEqual(results[0], results[2]);
 });
 
 test("calendar parts preserve original errors and operation-specific diagnostics", () => {
@@ -1714,6 +2376,10 @@ test("missing date-time parts support leaves imports, strings and other parts wo
     "formatToParts",
   )!;
   t.after(() => Object.defineProperty(Intl.DateTimeFormat.prototype, "formatToParts", descriptor));
+  const start = new Date("2026-03-01T00:30:00Z");
+  const end = new Date("2026-03-10T01:30:00Z");
+  const options = { timeZone: "UTC" };
+  formatDateTimeToParts(start, "en", options);
   Object.defineProperty(Intl.DateTimeFormat.prototype, "formatToParts", {
     ...descriptor,
     value: undefined,
@@ -1731,12 +2397,18 @@ test("missing date-time parts support leaves imports, strings and other parts wo
     () => translator.formatDateToParts("2026-09-30"),
     () => translator.formatTimeToParts("09:05"),
     () => translator.formatWeekdayToParts(0),
+    () => imported.formatDateTimeToParts(start, "en", options),
+    () => translator.formatDateTimeToParts(start, options),
   ])
     assert.throws(call, {
       name: "TypeError",
       message: /Intl\.DateTimeFormat\.prototype\.formatToParts.*supporting runtime.*polyfill/,
     });
   assert.equal(typeof imported.formatDate("2026-09-30", "en"), "string");
+  assert.equal(typeof imported.formatDateTime(start, "en", options), "string");
+  assert.equal(typeof translator.formatDateTime(start, options), "string");
+  assert.equal(typeof imported.formatDateTimeRange(start, end, "en", options), "string");
+  assert.ok(translator.formatDateTimeRangeToParts(start, end, options).length > 0);
   assert.equal(typeof translator.formatTime("09:05"), "string");
   assert.equal(typeof translator.formatWeekday(0), "string");
   assert.deepEqual(
@@ -1753,6 +2425,7 @@ test("missing date-time parts support leaves imports, strings and other parts wo
       "date-format-to-parts-failed",
       "time-format-to-parts-failed",
       "weekday-format-to-parts-failed",
+      "datetime-format-to-parts-failed",
     ],
   );
   assert.ok(entries.every(entry => entry.error instanceof TypeError));
@@ -2149,7 +2822,7 @@ test("formats numbers, currencies, calendar dates, clock times, and weekdays", (
   );
   const instant = new Date(Date.UTC(2026, 8, 30, 9, 5));
   assert.equal(
-    translator.formatDate(instant, {
+    translator.formatDateTime(instant, {
       timeStyle: "short",
       language: "en-GB",
       timeZone: "UTC",
@@ -2244,66 +2917,72 @@ test("clock formatting preserves allowed time fields without emitting date or zo
   );
 });
 
-test("date instants use native cross-realm timestamps and ignore overridden date methods", () => {
+test("datetime instants use native cross-realm timestamps and ignore overridden date methods", () => {
   const timestamp = Date.UTC(2026, 8, 30, 0, 30);
   const foreignDate: Date = runInNewContext(`new Date(${timestamp})`);
   assert.equal(foreignDate instanceof Date, false);
   const options = { timeZone: "America/Los_Angeles", dateStyle: "long" } as const;
   const expected = new Intl.DateTimeFormat("en-GB", options).format(timestamp);
-  assert.equal(formatDate(foreignDate, "en-GB", options), expected);
+  assert.equal(formatDateTime(foreignDate, "en-GB", options), expected);
   foreignDate.getTime = () => {
     throw new Error("Overridden getTime must not be called");
   };
   foreignDate.valueOf = () => 0;
   Object.defineProperty(foreignDate, Symbol.toPrimitive, { value: () => 0 });
-  assert.equal(formatDate(foreignDate, "en-GB", options), expected);
+  assert.equal(formatDateTime(foreignDate, "en-GB", options), expected);
   for (const invalid of [new Date(NaN), runInNewContext("new Date(NaN)")]) {
-    assert.throws(() => formatDate(invalid, "en"), /Date must be valid/);
+    assert.throws(
+      () => formatDateTime(invalid, "en", { timeZone: "UTC" }),
+      /Date instant must be valid/,
+    );
   }
   assert.throws(
     () =>
-      formatDate(
+      formatDateTime(
         { [Symbol.toStringTag]: "Date", getTime: () => timestamp } as unknown as Date,
         "en",
+        { timeZone: "UTC" },
       ),
-    RangeError,
+    TypeError,
   );
 });
 
-test("date instants are detached before Intl option coercion can mutate the original", () => {
+test("datetime instants are detached before Intl option coercion can mutate the original", () => {
   const timestamp = Date.UTC(2026, 8, 30, 0, 30);
   const date = new Date(timestamp);
-  const timeZone = {
+  const dateStyle = {
     toString() {
       date.setTime(0);
-      return "UTC";
+      return "long";
     },
   };
   assert.equal(
-    formatDate(date, "en-GB", { timeZone: timeZone as unknown as string, dateStyle: "long" }),
+    formatDateTime(date, "en-GB", { timeZone: "UTC", dateStyle: dateStyle as unknown as "long" }),
     new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", dateStyle: "long" }).format(timestamp),
   );
   assert.equal(date.getTime(), 0);
 });
 
-test("calendar dates remain UTC while Date instants honor the supplied zone", () => {
+test("calendar dates reject zones while datetime instants honor the supplied zone", () => {
   const instant = new Date(Date.UTC(2026, 8, 30, 0, 30));
   const zone = "America/Los_Angeles";
   assert.notEqual(
-    formatDate(instant, "en-GB", { timeZone: zone }),
-    formatDate(instant, "en-GB", {
+    formatDateTime(instant, "en-GB", { timeZone: zone }),
+    formatDateTime(instant, "en-GB", {
       timeZone: "UTC",
     }),
   );
   for (const calendar of ["2026-09-30", { year: 2026, month: 9, day: 30 }]) {
-    assert.equal(formatDate(calendar, "en-GB", { timeZone: zone }), formatDate(calendar, "en-GB"));
-    assert.equal(
-      formatDate(calendar, "en-GB", { timeZone: "Not/AZone" }),
-      formatDate(calendar, "en-GB"),
+    assert.throws(
+      () => formatDate(calendar, "en-GB", { timeZone: zone } as unknown as DateFormatOptions),
+      RangeError,
     );
-    assert.equal(formatDate(calendar, "en-GB", { timeStyle: "short" }), "00:00");
+    assert.throws(
+      () => formatDate(calendar, "en-GB", { timeStyle: "short" } as unknown as DateFormatOptions),
+      RangeError,
+    );
   }
-  assert.throws(() => formatDate(instant, "en-GB", { timeZone: "Not/AZone" }), RangeError);
+  assert.throws(() => formatDateTime(instant, "en-GB", { timeZone: "Not/AZone" }), RangeError);
   assert.equal(
     formatCurrency(1, "en", { currency: "ZZZ" }),
     new Intl.NumberFormat("en", { style: "currency", currency: "ZZZ" }).format(1),
@@ -2372,9 +3051,9 @@ test("reuses formatters for equivalent options but distinguishes locales and eff
   formatWeekday(1, "en-ZA", { width: "short" });
   assert.equal(dates, 5);
   const instant = new Date(Date.UTC(2026, 8, 30));
-  formatDate(instant, "en-ZA");
-  formatDate(instant, "en-ZA");
-  assert.equal(dates, 7);
+  formatDateTime(instant, "en-ZA", { timeZone: "UTC" });
+  formatDateTime(instant, "en-ZA", { timeZone: "UTC" });
+  assert.equal(dates, 6);
 });
 
 test("bypasses unsafe options and keeps the formatter cache bounded", t => {

@@ -45,6 +45,10 @@ import {
   formatDateRange as formatDateRangeValue,
   formatDateRangeToParts as formatDateRangeParts,
   formatDateToParts as formatDateParts,
+  formatDateTime as formatDateTimeValue,
+  formatDateTimeToParts as formatDateTimeParts,
+  formatDateTimeRange as formatDateTimeRangeValue,
+  formatDateTimeRangeToParts as formatDateTimeRangeParts,
   formatNumber as formatNumberValue,
   formatNumberRange as formatNumberRangeValue,
   formatNumberRangeToParts as formatNumberRangeParts,
@@ -62,6 +66,7 @@ import {
   type ClockTime,
   type CurrencyFormatOptions,
   type DateFormatOptions,
+  type DateTimeFormatOptions,
   type NumberFormatOptions,
   type PluralSelectOptions,
   type RelativeTimeFormatOptions,
@@ -1288,13 +1293,15 @@ export class Translator {
   }
 
   /**
-   * Formats an instant or calendar date; calendar-only values force UTC to avoid date shifts.
-   * @param value - Valid Date, strict YYYY-MM-DD string, or integer calendar fields.
-   * @param options - Intl date options and language override; without styles, numeric date fields default.
-   * @returns Locale-formatted date; Date instants use the host time zone unless explicitly overridden.
-   * @throws RangeError for invalid dates; locale/Intl option errors are logged and rethrown.
+   * Formats calendar fields without time-zone conversion; use formatDateTime for Date instants.
+   * @param value - Strict Gregorian YYYY-MM-DD string or integer calendar fields, never a Date.
+   * @param options - Date-only native options and language override; numeric year/month/day default
+   * unless dateStyle is defined. Clock and zone fields are forbidden, even inherited or undefined.
+   * @returns Locale-formatted calendar date using the active language unless overridden.
+   * @throws RangeError for invalid dates, forbidden fields or invalid locale/options; TypeError for
+   * native option errors. Failures are logged and the identical error is rethrown.
    */
-  public formatDate(value: Date | string | CalendarDate, options: DateFormatOptions = {}): string {
+  public formatDate(value: string | CalendarDate, options: DateFormatOptions = {}): string {
     return this.#format("date-format-failed", () =>
       formatDateValue(value, this.#language, options),
     );
@@ -1302,16 +1309,16 @@ export class Translator {
 
   /**
    * Formats date parts using the active language unless `options.language` overrides it.
-   * @param value - Valid Date instant, strict YYYY-MM-DD string, or integer calendar fields.
-   * Calendar-only inputs force UTC; Date instants use the explicit or host zone.
-   * @param options - Native date options; numeric year/month/day default unless a style is set.
+   * @param value - Strict Gregorian YYYY-MM-DD string or integer calendar fields, never a Date.
+   * @param options - Date-only options; numeric year/month/day default unless dateStyle is defined.
+   * Clock and zone fields are forbidden, even inherited or undefined; no zone conversion occurs.
    * @returns Fresh, caller-owned mutable native parts and records, not HTML; whitespace may differ from strings.
    * @throws RangeError for invalid dates/locale/options; TypeError for native option errors or missing
    * Intl.DateTimeFormat formatToParts support (requires a supporting runtime or consumer polyfill).
    * Failures are logged and the original error is rethrown.
    */
   public formatDateToParts(
-    value: Date | string | CalendarDate,
+    value: string | CalendarDate,
     options: DateFormatOptions = {},
   ): Intl.DateTimeFormatPart[] {
     return this.#format("date-format-to-parts-failed", () =>
@@ -1321,19 +1328,18 @@ export class Translator {
 
   /**
    * Formats a native date range using the active language unless `options.language` overrides it.
-   * @param start - Valid Date instant, strict YYYY-MM-DD string, or integer calendar record.
-   * @param end - Compatible endpoint: calendars (strings/records may mix) or two Date instants.
-   * Both Dates are detached before options are read; reversed pairs are rejected, equal pairs use native behavior.
-   * @param options - Native options; numeric date defaults unless a style is set. Calendars force UTC
-   * and ignore supplied zones; instants use the explicit or host zone.
+   * @param start - Strict Gregorian YYYY-MM-DD string or integer calendar record, never a Date.
+   * @param end - Calendar endpoint (strings/records may mix), not earlier than start; equality uses native behavior.
+   * @param options - Date-only options; numeric date defaults unless dateStyle is defined. Clock and
+   * zone fields are forbidden even inherited or undefined; calendar fields never undergo zone conversion.
    * @returns Native localized range text, without concatenation or endpoint collapse.
    * @throws RangeError for invalid/incompatible/reversed endpoints or invalid locale/options; TypeError
    * for native option errors or missing Intl.DateTimeFormat formatRange support (use a supporting
    * runtime or consumer polyfill). Failures are logged and the identical error is rethrown.
    */
   public formatDateRange(
-    start: Date | string | CalendarDate,
-    end: Date | string | CalendarDate,
+    start: string | CalendarDate,
+    end: string | CalendarDate,
     options: DateFormatOptions = {},
   ): string {
     return this.#format("date-range-format-failed", () =>
@@ -1343,11 +1349,10 @@ export class Translator {
 
   /**
    * Formats date range parts using the active language unless `options.language` overrides it.
-   * @param start - Valid Date instant, strict YYYY-MM-DD string, or integer calendar record.
-   * @param end - Compatible endpoint: calendars (strings/records may mix) or two Date instants.
-   * Both Dates are detached before options are read; reversed pairs are rejected, equal pairs use native behavior.
-   * @param options - Native options; numeric date defaults unless a style is set. Calendars force UTC
-   * and ignore supplied zones; instants use the explicit or host zone.
+   * @param start - Strict Gregorian YYYY-MM-DD string or integer calendar record, never a Date.
+   * @param end - Calendar endpoint (strings/records may mix), not earlier than start; equality uses native behavior.
+   * @param options - Date-only options; numeric date defaults unless dateStyle is defined. Clock and
+   * zone fields are forbidden even inherited or undefined; calendar fields never undergo zone conversion.
    * @returns Fresh, caller-owned mutable native parts and records preserving order, literals and
    * startRange/endRange/shared source metadata, not HTML.
    * @throws RangeError for invalid/incompatible/reversed endpoints or invalid locale/options; TypeError
@@ -1355,12 +1360,92 @@ export class Translator {
    * runtime or consumer polyfill). Failures are logged and the identical error is rethrown.
    */
   public formatDateRangeToParts(
-    start: Date | string | CalendarDate,
-    end: Date | string | CalendarDate,
+    start: string | CalendarDate,
+    end: string | CalendarDate,
     options: DateFormatOptions = {},
   ): Intl.DateTimeRangeFormatPart[] {
     return this.#format("date-range-format-to-parts-failed", () =>
       formatDateRangeParts(start, end, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats a Date instant in a required explicit output zone, using the active or overridden language.
+   * @param value - Valid Date, including cross-realm Dates; detached via native slots before option reads.
+   * @param options - Required nonblank primitive timeZone and native options with optional language.
+   * The zone is read once before language and other own enumerable options. Medium date and short time
+   * default only when neither styles nor display components are defined; modifiers alone retain defaults.
+   * Date offsets, locale and host settings never supply an implicit zone.
+   * @returns Native localized datetime text; explicit styles/components may project only date or time.
+   * @throws RangeError for invalid Dates, missing/invalid zones or invalid locale/options; TypeError for
+   * non-Date inputs, native option errors or missing Intl.DateTimeFormat format support (requires a
+   * supporting runtime or consumer polyfill). Logs datetime-format-failed and rethrows the identical error.
+   */
+  public formatDateTime(value: Date, options: DateTimeFormatOptions): string {
+    return this.#format("datetime-format-failed", () =>
+      formatDateTimeValue(value, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats an explicitly zoned instant as native parts using the active or overridden language.
+   * @param value - Valid Date, including cross-realm Dates; detached before any option reads/coercion.
+   * @param options - Required primitive nonblank timeZone, native options and optional language. Reads
+   * zone once before language and other own enumerable options; medium date/short time default only
+   * without defined styles/display components. No zone is inferred from the input, locale or host.
+   * @returns Fresh caller-owned mutable native parts and records, not HTML; whitespace may differ from strings.
+   * @throws RangeError for invalid Dates, missing/invalid zones or invalid locale/options; TypeError for
+   * non-Date inputs, native option errors or missing Intl.DateTimeFormat formatToParts support (requires
+   * a supporting runtime or consumer polyfill). Logs datetime-format-to-parts-failed and rethrows the identical error.
+   */
+  public formatDateTimeToParts(
+    value: Date,
+    options: DateTimeFormatOptions,
+  ): Intl.DateTimeFormatPart[] {
+    return this.#format("datetime-format-to-parts-failed", () =>
+      formatDateTimeParts(value, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats an explicitly zoned instant range using native range patterns and the active/overridden language.
+   * @param start - Valid Date, including cross-realm Dates; native slots ignore overridden coercion methods.
+   * @param end - Valid Date not earlier than start; both endpoints detach before options, equality stays native.
+   * @param options - Required primitive nonblank timeZone, native options and optional language. Reads
+   * zone once before language and other own enumerable options; medium date/short time default only
+   * without defined styles/display components. No input, locale or host zone is inferred.
+   * @returns Native localized range text without concatenation or package-selected endpoint collapse.
+   * @throws RangeError for invalid/reversed Dates, missing/invalid zones or invalid locale/options;
+   * TypeError for non-Date inputs, native option errors or missing Intl.DateTimeFormat formatRange support
+   * (requires a supporting runtime or consumer polyfill). Logs datetime-range-format-failed and rethrows the identical error.
+   */
+  public formatDateTimeRange(start: Date, end: Date, options: DateTimeFormatOptions): string {
+    return this.#format("datetime-range-format-failed", () =>
+      formatDateTimeRangeValue(start, end, this.#language, options),
+    );
+  }
+
+  /**
+   * Formats explicitly zoned instant range parts using the active or overridden language.
+   * @param start - Valid Date, including cross-realm Dates; native slots ignore overridden coercion methods.
+   * @param end - Valid Date not earlier than start; both detach before options, equality stays native.
+   * @param options - Required primitive nonblank timeZone, native options and optional language. Reads
+   * zone once before language and other own enumerable options; medium date/short time default only
+   * without defined styles/display components. No implicit output zone is used.
+   * @returns Fresh caller-owned mutable native parts and records retaining order, literals and
+   * startRange/endRange/shared source metadata, not HTML; whitespace may differ from range text.
+   * @throws RangeError for invalid/reversed Dates, missing/invalid zones or invalid locale/options;
+   * TypeError for non-Date inputs, native option errors or missing Intl.DateTimeFormat formatRangeToParts
+   * support (requires a supporting runtime or consumer polyfill). Logs datetime-range-format-to-parts-failed
+   * and rethrows the identical error, even if the logger fails.
+   */
+  public formatDateTimeRangeToParts(
+    start: Date,
+    end: Date,
+    options: DateTimeFormatOptions,
+  ): Intl.DateTimeRangeFormatPart[] {
+    return this.#format("datetime-range-format-to-parts-failed", () =>
+      formatDateTimeRangeParts(start, end, this.#language, options),
     );
   }
 
@@ -1400,7 +1485,7 @@ export class Translator {
   /**
    * Formats a same-day clock range using the active language unless `options.language` overrides it.
    * @param start - Strict HH:MM/HH:MM:SS string or integer clock record; no zone conversion occurs.
-   * @param end - Clock endpoint not earlier than start; use Date ranges for cross-midnight intervals.
+   * @param end - Clock endpoint not earlier than start; use explicitly zoned datetime ranges for real cross-midnight instants.
    * @param options - Clock-only options; hour/minute plus seconds if either endpoint supplied them
    * (including zero). Defined components override defaults; short/medium styles replace them.
    * Date/zone fields are forbidden even when undefined.
@@ -1422,7 +1507,7 @@ export class Translator {
   /**
    * Formats same-day clock range parts using the active language or `options.language` override.
    * @param start - Strict HH:MM/HH:MM:SS string or integer clock record; no zone conversion occurs.
-   * @param end - Clock endpoint not earlier than start; use Date ranges for cross-midnight intervals.
+   * @param end - Clock endpoint not earlier than start; use explicitly zoned datetime ranges for real cross-midnight instants.
    * @param options - Clock-only options; hour/minute plus pair-aware seconds default unless a short/medium
    * style is set. Defined components override defaults; date/zone fields are forbidden even if undefined.
    * @returns Fresh, caller-owned mutable native parts and records preserving order, literals and
@@ -1444,9 +1529,10 @@ export class Translator {
   /**
    * Formats a weekday numbered Monday 0 through Sunday 6.
    * @param weekday - Integer from 0 to 6.
-   * @param options - Name width (defaults to long) and optional language override.
+   * @param options - Name width (defaults to long) and optional language override; timeZone and
+   * timeZoneName are forbidden even when inherited or undefined.
    * @returns Localized weekday name using the active language unless overridden.
-   * @throws RangeError for out-of-range weekdays; locale/Intl errors are logged and rethrown.
+   * @throws RangeError for invalid weekdays or forbidden zones; locale/Intl errors are logged and rethrown.
    */
   public formatWeekday(weekday: number, options: WeekdayFormatOptions = {}): string {
     return this.#format("weekday-format-failed", () =>
@@ -1457,7 +1543,8 @@ export class Translator {
   /**
    * Formats weekday parts using the active language unless `options.language` overrides it.
    * @param weekday - Integer from 0 (Monday) through 6 (Sunday), independent of the host zone.
-   * @param options - Name width (defaults to long) and optional language override.
+   * @param options - Name width (defaults to long) and optional language override; timeZone and
+   * timeZoneName are forbidden even when inherited or undefined.
    * @returns Fresh, caller-owned mutable native parts and records, not HTML.
    * @throws RangeError for invalid weekdays/locale/width; TypeError for native coercion errors or missing
    * Intl.DateTimeFormat formatToParts support (requires a supporting runtime or consumer polyfill).

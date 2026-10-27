@@ -2066,6 +2066,75 @@ test("core types compile without ambient types and retain native abort/fetch com
     await writeFile(
       join(directory, "clean.ts"),
       `${imports}
+      import * as temporal from ${JSON.stringify(index)};
+      const instantOptions: temporal.DateTimeFormatOptions = { timeZone: "Europe/Helsinki", language: "fi" };
+      ${["", "ToParts", "Range", "RangeToParts"]
+        .map(suffix => {
+          const range = suffix.startsWith("Range");
+          const values = range ? "new Date(), new Date()" : "new Date()";
+          const calendars = range ? '"2026-10-03", "2026-10-04"' : '"2026-10-03"';
+          const result = suffix.endsWith("ToParts")
+            ? range
+              ? "Intl.DateTimeRangeFormatPart[]"
+              : "Intl.DateTimeFormatPart[]"
+            : "string";
+          return `
+        const instant${suffix || "Text"}: ${result} = temporal.formatDateTime${suffix}(${values}, "en", instantOptions);
+        const methodInstant${suffix || "Text"}: ${result} = new temporal.Translator().formatDateTime${suffix}(${values}, instantOptions);
+        // @ts-expect-error Calendar helpers never accept Date instants.
+        temporal.formatDate${suffix}(${values}, "en");
+        // @ts-expect-error Calendar methods never accept Date instants.
+        new temporal.Translator().formatDate${suffix}(${values});
+        // @ts-expect-error Instant helpers require options with an explicit zone.
+        temporal.formatDateTime${suffix}(${values}, "en");
+        // @ts-expect-error Instant methods require options with an explicit zone.
+        new temporal.Translator().formatDateTime${suffix}(${values});
+        // @ts-expect-error An empty options object does not provide a zone.
+        temporal.formatDateTime${suffix}(${values}, "en", {});
+        // @ts-expect-error Undefined is not an explicit zone.
+        new temporal.Translator().formatDateTime${suffix}(${values}, { timeZone: undefined });
+        // @ts-expect-error Calendar strings are not instants.
+        temporal.formatDateTime${suffix}(${calendars}, "en", instantOptions);
+        // @ts-expect-error Calendar records are not instants.
+        new temporal.Translator().formatDateTime${suffix}(${range ? "{ year: 2026, month: 10, day: 3 }, new Date()" : "{ year: 2026, month: 10, day: 3 }"}, instantOptions);
+        // @ts-expect-error Numeric timestamps are not Date objects.
+        temporal.formatDateTime${suffix}(${range ? "new Date(), 0" : "0"}, "en", instantOptions);
+        ${[
+          "timeStyle",
+          "hour",
+          "minute",
+          "second",
+          "fractionalSecondDigits",
+          "dayPeriod",
+          "hour12",
+          "hourCycle",
+          "timeZone",
+          "timeZoneName",
+        ]
+          .map(
+            key => `
+        // @ts-expect-error Calendar options forbid ${key}.
+        temporal.formatDate${suffix}(${calendars}, "en", { ${key}: ${key === "hour12" ? "false" : key === "fractionalSecondDigits" ? "3" : ["hour", "minute", "second"].includes(key) ? '"numeric"' : key === "hourCycle" ? '"h23"' : key === "timeZone" ? '"UTC"' : '"short"'} });
+        // @ts-expect-error Calendar method options forbid ${key}.
+        new temporal.Translator().formatDate${suffix}(${calendars}, { ${key}: ${key === "hour12" ? "false" : key === "fractionalSecondDigits" ? "3" : ["hour", "minute", "second"].includes(key) ? '"numeric"' : key === "hourCycle" ? '"h23"' : key === "timeZone" ? '"UTC"' : '"short"'} });`,
+          )
+          .join("\n")}
+        `;
+        })
+        .join("\n")}
+      ${["", "ToParts"]
+        .map(suffix =>
+          ["timeZone", "timeZoneName"]
+            .map(
+              key => `
+      // @ts-expect-error Weekdays forbid zones.
+      temporal.formatWeekday${suffix}(0, "en", { ${key}: "UTC" });
+      // @ts-expect-error Weekday methods forbid zones.
+      new temporal.Translator().formatWeekday${suffix}(0, { ${key}: "UTC" });`,
+            )
+            .join("\n"),
+        )
+        .join("\n")}
       declare const signal: TranslationAbortSignal;
       new Translator().loadTranslationFiles([], { signal });
       declare const event: LanguageChangeEvent;
@@ -2169,14 +2238,14 @@ test("core types compile without ambient types and retain native abort/fetch com
        const wrongMethodCurrencyRangeParts: string = translator.formatCurrencyRangeToParts(1, 2, currencyOptions);
       const calendar: CalendarDate = { year: 2026, month: 10, day: 3 };
       const clock: ClockTime = { hour: 13, minute: 45, second: 0 };
-      const dateOptions: DateFormatOptions = { language: "fi", dateStyle: "long", timeZone: "UTC" };
+      const dateOptions: DateFormatOptions = { language: "fi", dateStyle: "long" };
       const timeOptions: TimeFormatOptions = { language: "fi", timeStyle: "medium", hour12: false };
       const weekdayOptions: WeekdayFormatOptions = { language: "fi", width: "short" };
       const dateRange: string = formatDateRange(calendar, "2026-10-04", "en", dateOptions);
       const timeRange: string = formatTimeRange("13:00", clock, "en", timeOptions);
-      const dateRangeParts: Intl.DateTimeRangeFormatPart[] = formatDateRangeToParts(new Date(), new Date(), "en", dateOptions);
+      const dateRangeParts: Intl.DateTimeRangeFormatPart[] = formatDateRangeToParts(calendar, calendar, "en", dateOptions);
       const timeRangeParts: Intl.DateTimeRangeFormatPart[] = formatTimeRangeToParts(clock, "14:00", "en", timeOptions);
-      const methodDateRange: string = translator.formatDateRange(new Date(), new Date(), dateOptions);
+      const methodDateRange: string = translator.formatDateRange(calendar, calendar, dateOptions);
       const methodTimeRange: string = translator.formatTimeRange(clock, "14:00", timeOptions);
       const methodDateRangeParts: Intl.DateTimeRangeFormatPart[] = translator.formatDateRangeToParts("2026-10-03", calendar, dateOptions);
       const methodTimeRangeParts: Intl.DateTimeRangeFormatPart[] = translator.formatTimeRangeToParts("13:00", clock, timeOptions);
@@ -2190,9 +2259,11 @@ test("core types compile without ambient types and retain native abort/fetch com
       }
       for (const format of [formatDateRange, formatDateRangeToParts]) {
         format(calendar, "2026-10-04", "en");
+        // @ts-expect-error Calendar ranges reject two instants.
         format(new Date(), new Date(), "en");
-        // The input union permits mixed pairs; runtime validation rejects them.
+        // @ts-expect-error Calendar ranges reject an instant start.
         format(new Date(), calendar, "en");
+        // @ts-expect-error Calendar ranges reject an instant end.
         format("2026-10-03", new Date(), "en");
         // @ts-expect-error Date start endpoints do not accept timestamps.
         format(0, calendar, "en");
@@ -2201,8 +2272,11 @@ test("core types compile without ambient types and retain native abort/fetch com
       }
       for (const format of [translator.formatDateRange, translator.formatDateRangeToParts]) {
         format(calendar, "2026-10-04");
+        // @ts-expect-error Calendar ranges reject two instants.
         format(new Date(), new Date());
+        // @ts-expect-error Calendar ranges reject an instant end.
         format(calendar, new Date());
+        // @ts-expect-error Calendar ranges reject an instant start.
         format(new Date(), "2026-10-04");
         // @ts-expect-error Date start records require a day.
         format({ year: 2026, month: 10 }, calendar);
@@ -2252,9 +2326,10 @@ test("core types compile without ambient types and retain native abort/fetch com
       const date: Intl.DateTimeFormatPart[] = formatDateToParts(calendar, "en", dateOptions);
       const time: Intl.DateTimeFormatPart[] = formatTimeToParts(clock, "en", timeOptions);
       const weekday: Intl.DateTimeFormatPart[] = formatWeekdayToParts(0, "en", weekdayOptions);
-      const methodDate: Intl.DateTimeFormatPart[] = translator.formatDateToParts(new Date(), dateOptions);
+      const methodDate: Intl.DateTimeFormatPart[] = translator.formatDateToParts(calendar, dateOptions);
       const methodTime: Intl.DateTimeFormatPart[] = translator.formatTimeToParts("13:45", timeOptions);
       const methodWeekday: Intl.DateTimeFormatPart[] = translator.formatWeekdayToParts(6, weekdayOptions);
+      // @ts-expect-error Calendar helpers reject Date instants.
       formatDateToParts(new Date(), "en");
       formatDateToParts("2026-10-03", "en");
       translator.formatDateToParts(calendar);

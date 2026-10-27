@@ -25,7 +25,7 @@ export interface CalendarDate {
   day: number;
 }
 
-/** A clock time without date or time-zone semantics. */
+/** A clock time without date or time-zone semantics; each field is read once per endpoint. */
 export interface ClockTime {
   /** Integer hour from 0 through 23. */
   hour: number;
@@ -133,6 +133,10 @@ const numberFormatters = new Map<string, Intl.NumberFormat>();
 const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
 const relativeTimeFormatters = new Map<string, Intl.RelativeTimeFormat>();
 const pluralRules = new Map<string, Intl.PluralRules>();
+// Only this package-owned object can safely key caches for pass-through native options.
+const DEFAULT_NATIVE_OPTIONS: RelativeTimeFormatOptions & PluralSelectOptions = Object.freeze(
+  Object.create(null),
+);
 
 /** Creates an order-independent primitive-options key, or skips unsafe/oversized caching. */
 function formatterKey(language: string, options: object): string | undefined {
@@ -156,22 +160,6 @@ function formatterKey(language: string, options: object): string | undefined {
     entries.map(([name, value]) => [name, typeof value, value]),
   ]);
   return key.length <= MAX_CACHE_KEY_LENGTH ? key : undefined;
-}
-
-/** Inspects data properties without invoking getters; richer options retain native property reads. */
-function nativeFormatterKey(language: string, options: object): string | undefined {
-  const prototype = Object.getPrototypeOf(options);
-  if (prototype !== Object.prototype && prototype !== null) return undefined;
-  const descriptors = Object.getOwnPropertyDescriptors(options);
-  if (Object.values(descriptors).some(descriptor => !("value" in descriptor))) return undefined;
-  return formatterKey(
-    language,
-    Object.fromEntries(
-      Object.entries(descriptors)
-        .filter(([name]) => name !== "language")
-        .map(([name, descriptor]) => [name, descriptor.value]),
-    ),
-  );
 }
 
 /** Reuses or creates a formatter with bounded LRU eviction; undefined keys bypass the cache. */
@@ -267,11 +255,9 @@ interface ParsedClockTime extends Required<ClockTime> {
 /** Validates strict clock strings or integer fields; omitted seconds become zero. */
 function parseClockTime(value: string | ClockTime): ParsedClockTime {
   let time: ClockTime;
-  let hasExplicitSeconds: boolean;
   if (typeof value === "string") {
     const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
     if (!match) throw new RangeError("Time string must use HH:MM or HH:MM:SS format");
-    hasExplicitSeconds = match[3] !== undefined;
     time = {
       hour: Number(match[1]),
       minute: Number(match[2]),
@@ -279,23 +265,25 @@ function parseClockTime(value: string | ClockTime): ParsedClockTime {
     };
   } else {
     time = value;
-    hasExplicitSeconds = time.second !== undefined;
   }
-  const second = time.second === undefined ? 0 : time.second;
+  // Validate and anchor the same field snapshot, even for accessor-backed records.
+  const { hour, minute, second: suppliedSecond } = time;
+  const hasExplicitSeconds = suppliedSecond !== undefined;
+  const second = suppliedSecond === undefined ? 0 : suppliedSecond;
   if (
-    !Number.isInteger(time.hour) ||
-    !Number.isInteger(time.minute) ||
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
     !Number.isInteger(second) ||
-    time.hour < 0 ||
-    time.hour > 23 ||
-    time.minute < 0 ||
-    time.minute > 59 ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59 ||
     second < 0 ||
     second > 59
   ) {
     throw new RangeError("Clock time is out of range");
   }
-  return { hour: time.hour, minute: time.minute, second, hasExplicitSeconds };
+  return { hour, minute, second, hasExplicitSeconds };
 }
 
 /**
@@ -429,6 +417,7 @@ function numberRangeParts(
  * @param unit - Native singular or plural unit from year through second, including quarter and week.
  * @param language - Locale tag, unless overridden by `options.language`.
  * @param options - Native relative-time options and locale override; defaults to `{}`.
+ * Supplied options retain native getter/coercion order and bypass caching; omitted options share cached defaults.
  * @returns Localized relative-time text, not a live clock or automatically chosen unit.
  * @throws {RangeError} If the amount is nonfinite or the effective locale, unit, or options are invalid.
  * @throws {TypeError} If native Intl rejects option or unit coercion.
@@ -437,7 +426,7 @@ export function formatRelativeTime(
   value: number,
   unit: Intl.RelativeTimeFormatUnit,
   language: string,
-  options: RelativeTimeFormatOptions = {},
+  options: RelativeTimeFormatOptions = DEFAULT_NATIVE_OPTIONS,
 ): string {
   return relativeTimeFormatter(language, options).format(
     finiteNumber(value, "Relative time amount"),
@@ -445,7 +434,7 @@ export function formatRelativeTime(
   );
 }
 
-/** Retains original native option reads while sharing the relative-time formatter cache. */
+/** Preserves native reads/coercions; caller options may be proxies despite ordinary descriptors. */
 function relativeTimeFormatter(
   language: string,
   options: RelativeTimeFormatOptions,
@@ -453,7 +442,7 @@ function relativeTimeFormatter(
   const tag = locale(options.language ?? language);
   return cachedFormatter(
     relativeTimeFormatters,
-    nativeFormatterKey(tag, options),
+    options === DEFAULT_NATIVE_OPTIONS ? formatterKey(tag, options) : undefined,
     () => new Intl.RelativeTimeFormat(tag, options),
   );
 }
@@ -464,6 +453,7 @@ function relativeTimeFormatter(
  * @param unit - Native singular or plural unit; no date difference or automatic unit selection occurs.
  * @param language - Locale tag, unless overridden by `options.language`.
  * @param options - Native options and locale override; defaults to long, numeric-always output.
+ * Supplied options bypass caching to preserve native getter/coercion order, including Proxy behavior.
  * @returns Fresh, caller-owned mutable parts and records; literals may lack `unit`. No HTML is produced.
  * @throws {RangeError} If the amount is nonfinite or the effective locale, unit, or options are invalid.
  * @throws {TypeError} If Intl rejects coercion, or `Intl.RelativeTimeFormat.prototype.formatToParts`
@@ -473,7 +463,7 @@ export function formatRelativeTimeToParts(
   value: number,
   unit: Intl.RelativeTimeFormatUnit,
   language: string,
-  options: RelativeTimeFormatOptions = {},
+  options: RelativeTimeFormatOptions = DEFAULT_NATIVE_OPTIONS,
 ): Intl.RelativeTimeFormatPart[] {
   const formatter = relativeTimeFormatter(language, options);
   const number = finiteNumber(value, "Relative time amount");
@@ -492,6 +482,7 @@ export function formatRelativeTimeToParts(
  * @param value - Finite number; negative and fractional values follow native plural rules.
  * @param language - Locale tag, unless overridden by `options.language`.
  * @param options - Native plural-rule/rounding options and locale override; defaults to cardinal rules.
+ * Supplied options bypass caching to preserve native getter/coercion order, including Proxy behavior.
  * @returns One of `zero`, `one`, `two`, `few`, `many`, or `other` for the effective locale.
  * @throws {RangeError} If the number is nonfinite or the effective locale/options are invalid.
  * @throws {TypeError} If native Intl rejects option coercion.
@@ -499,12 +490,12 @@ export function formatRelativeTimeToParts(
 export function selectPlural(
   value: number,
   language: string,
-  options: PluralSelectOptions = {},
+  options: PluralSelectOptions = DEFAULT_NATIVE_OPTIONS,
 ): Intl.LDMLPluralRule {
   const tag = locale(options.language ?? language);
   return cachedFormatter(
     pluralRules,
-    nativeFormatterKey(tag, options),
+    options === DEFAULT_NATIVE_OPTIONS ? formatterKey(tag, options) : undefined,
     () => new Intl.PluralRules(tag, options),
   ).select(finiteNumber(value, "Plural value"));
 }
@@ -659,10 +650,9 @@ function calendarOptions(options: DateFormatOptions): DateFormatOptions {
 }
 
 /** Applies date defaults and private UTC anchoring for calendar single values and pairs. */
-function dateFormatter(
-  language: string,
-  providedOptions: Intl.DateTimeFormatOptions,
-): Intl.DateTimeFormat {
+function dateFormatter(language: string, providedOptions: DateFormatOptions): Intl.DateTimeFormat {
+  // A language/option getter may have added forbidden fields while snapshotting.
+  calendarOptions(providedOptions);
   const defaults: Intl.DateTimeFormatOptions =
     providedOptions.dateStyle === undefined
       ? { year: "numeric", month: "numeric", day: "numeric" }
@@ -1005,6 +995,12 @@ function clockOptions(options: TimeFormatOptions) {
     }
   }
   const { language: languageOverride, ...providedOptions } = options;
+  // Recheck the detached snapshot so getter-added fields cannot expose synthetic dates/zones.
+  for (const option of CLOCK_FORBIDDEN_OPTIONS) {
+    if (option in providedOptions) {
+      throw new RangeError(`Clock time formatting does not support ${option}`);
+    }
+  }
   if (["long", "full"].includes(providedOptions.timeStyle ?? "")) {
     throw new RangeError("Clock time formatting supports only short or medium timeStyle");
   }
@@ -1039,11 +1035,16 @@ function clockFormatter(
     ),
     timeZone: "UTC",
   };
-  return cachedFormatter(
+  const formatter = cachedFormatter(
     dateTimeFormatters,
     formatterKey(tag, formatOptions),
     () => new Intl.DateTimeFormat(tag, formatOptions),
   );
+  // Native coercion can turn an object-valued style into a forbidden zone-bearing style.
+  if (["long", "full"].includes(formatter.resolvedOptions().timeStyle ?? "")) {
+    throw new RangeError("Clock time formatting supports only short or medium timeStyle");
+  }
+  return formatter;
 }
 
 /**

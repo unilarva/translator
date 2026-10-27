@@ -1183,7 +1183,7 @@ export class Translator {
   public formatRelativeTime(
     value: number,
     unit: Intl.RelativeTimeFormatUnit,
-    options: RelativeTimeFormatOptions = {},
+    options?: RelativeTimeFormatOptions,
   ): string {
     return this.#format("relative-time-format-failed", () =>
       formatRelativeTimeValue(value, unit, this.#language, options),
@@ -1203,7 +1203,7 @@ export class Translator {
   public formatRelativeTimeToParts(
     value: number,
     unit: Intl.RelativeTimeFormatUnit,
-    options: RelativeTimeFormatOptions = {},
+    options?: RelativeTimeFormatOptions,
   ): Intl.RelativeTimeFormatPart[] {
     return this.#format("relative-time-format-to-parts-failed", () =>
       formatRelativeTimeParts(value, unit, this.#language, options),
@@ -1217,7 +1217,7 @@ export class Translator {
    * @returns Native category `zero`, `one`, `two`, `few`, `many`, or `other`.
    * @throws RangeError for nonfinite values; locale/Intl option errors are logged and rethrown.
    */
-  public selectPlural(value: number, options: PluralSelectOptions = {}): Intl.LDMLPluralRule {
+  public selectPlural(value: number, options?: PluralSelectOptions): Intl.LDMLPluralRule {
     return this.#format("plural-select-failed", () =>
       selectPluralValue(value, this.#language, options),
     );

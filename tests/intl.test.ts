@@ -643,6 +643,90 @@ test("all calendar APIs reject Dates and forbidden option presence, including in
   }
 });
 
+test("calendar and clock snapshots reject forbidden fields injected by option getters", () => {
+  const translator = new Translator();
+  const families = [
+    {
+      field: "hour",
+      calls: [
+        (o: DateFormatOptions) => formatDate("2026-01-01", "en", o),
+        (o: DateFormatOptions) => formatDateToParts("2026-01-01", "en", o),
+        (o: DateFormatOptions) => formatDateRange("2026-01-01", "2026-01-02", "en", o),
+        (o: DateFormatOptions) => formatDateRangeToParts("2026-01-01", "2026-01-02", "en", o),
+        (o: DateFormatOptions) => translator.formatDate("2026-01-01", o),
+        (o: DateFormatOptions) => translator.formatDateToParts("2026-01-01", o),
+        (o: DateFormatOptions) => translator.formatDateRange("2026-01-01", "2026-01-02", o),
+        (o: DateFormatOptions) => translator.formatDateRangeToParts("2026-01-01", "2026-01-02", o),
+      ],
+    },
+    {
+      field: "year",
+      calls: [
+        (o: TimeFormatOptions) => formatTime("09:00", "en", o),
+        (o: TimeFormatOptions) => formatTimeToParts("09:00", "en", o),
+        (o: TimeFormatOptions) => formatTimeRange("09:00", "17:00", "en", o),
+        (o: TimeFormatOptions) => formatTimeRangeToParts("09:00", "17:00", "en", o),
+        (o: TimeFormatOptions) => translator.formatTime("09:00", o),
+        (o: TimeFormatOptions) => translator.formatTimeToParts("09:00", o),
+        (o: TimeFormatOptions) => translator.formatTimeRange("09:00", "17:00", o),
+        (o: TimeFormatOptions) => translator.formatTimeRangeToParts("09:00", "17:00", o),
+      ],
+    },
+  ];
+  for (const { field, calls } of families)
+    for (const call of calls) {
+      for (const value of ["numeric", undefined])
+        for (const transient of [false, true]) {
+          let languageReads = 0;
+          const options = {
+            get language() {
+              languageReads++;
+              Object.defineProperty(options, field, {
+                enumerable: true,
+                configurable: true,
+                get() {
+                  if (transient) Reflect.deleteProperty(options, field);
+                  return value;
+                },
+              });
+              return "en";
+            },
+          };
+          assert.throws(() => call(options), new RegExp(`does not support ${field}`));
+          assert.equal(languageReads, 1);
+        }
+    }
+});
+
+test("clock records validate and anchor one read of each field", () => {
+  const translator = new Translator({ language: "en" });
+  for (const call of [
+    (clock: ClockTime) => formatTime(clock, "en"),
+    (clock: ClockTime) => formatTimeToParts(clock, "en"),
+    (clock: ClockTime) => formatTimeRange(clock, "17:00", "en"),
+    (clock: ClockTime) => formatTimeRangeToParts("08:00", clock, "en"),
+    (clock: ClockTime) => translator.formatTime(clock),
+    (clock: ClockTime) => translator.formatTimeToParts(clock),
+    (clock: ClockTime) => translator.formatTimeRange(clock, "17:00"),
+    (clock: ClockTime) => translator.formatTimeRangeToParts("08:00", clock),
+  ]) {
+    const reads = { hour: 0, minute: 0, second: 0 };
+    const clock = {
+      get hour() {
+        return ++reads.hour === 1 ? 9 : 25;
+      },
+      get minute() {
+        return ++reads.minute === 1 ? 5 : 60;
+      },
+      get second() {
+        return ++reads.second === 1 ? 0 : 60;
+      },
+    };
+    assert.deepEqual(call(clock), call({ hour: 9, minute: 5, second: 0 }));
+    assert.deepEqual(reads, { hour: 1, minute: 1, second: 1 });
+  }
+});
+
 test("datetime APIs require native Date slots and an explicit primitive nonblank zone", () => {
   const date = new Date("2026-09-30T23:30:00Z");
   const translator = new Translator();
@@ -2313,7 +2397,7 @@ test("parts diagnostics preserve error identity and stable events despite logger
   );
 });
 
-test("parts share string caches while preserving option-read and coercion contracts", t => {
+test("parts share safe string caches while preserving native option-read and coercion contracts", t => {
   const NumberFormatter = Intl.NumberFormat;
   const Relative = Intl.RelativeTimeFormat;
   let numbers = 0;
@@ -2342,7 +2426,10 @@ test("parts share string caches while preserving option-read and coercion contra
   formatRelativeTime(1, "day", "en-x-parts", { numeric: "auto" });
   formatRelativeTimeToParts(2, "hours", "EN_x_parts", { numeric: "auto" });
   assert.equal(numbers, 2);
-  assert.equal(relatives, 1);
+  assert.equal(relatives, 2);
+  formatRelativeTime(1, "day", "en-x-default-parts");
+  formatRelativeTimeToParts(2, "hours", "EN_x_default_parts");
+  assert.equal(relatives, 3);
 
   let reads = 0;
   const numberOptions = {
@@ -3118,7 +3205,7 @@ test("new Intl failure diagnostics preserve original errors even if the logger f
   );
 });
 
-test("relative-time and plural caches reuse canonical locales and snapshot effective options", t => {
+test("relative-time and plural cache only package-owned defaults across helpers and methods", t => {
   const Relative = Intl.RelativeTimeFormat;
   const Plural = Intl.PluralRules;
   let relatives = 0;
@@ -3135,24 +3222,137 @@ test("relative-time and plural caches reuse canonical locales and snapshot effec
     plurals++;
     return new Plural(...args);
   });
+  const translator = new Translator({ language: "en-x-default-reuse" });
+  formatRelativeTime(1, "day", "en-x-default-reuse");
+  formatRelativeTimeToParts(2, "hours", "EN_x_default_reuse");
+  translator.formatRelativeTime(1, "day");
+  translator.formatRelativeTimeToParts(2, "hours");
+  selectPlural(1, "en-x-default-reuse");
+  selectPlural(2, "EN_x_default_reuse");
+  translator.selectPlural(3);
+  assert.equal(relatives, 1);
+  assert.equal(plurals, 1);
   const relativeOptions: RelativeTimeFormatOptions = { style: "short", numeric: "auto" };
   formatRelativeTime(1, "day", "en-x-reuse", relativeOptions);
   formatRelativeTime(2, "hours", "EN_x_reuse", { numeric: "auto", style: "short" });
-  assert.equal(relatives, 1);
+  assert.equal(relatives, 3);
   relativeOptions.style = "narrow";
   formatRelativeTime(1, "day", "en-x-reuse", relativeOptions);
   formatRelativeTime(1, "day", "fi-x-reuse", relativeOptions);
   formatRelativeTime(1, "day", "en-x-reuse", { ...relativeOptions, language: "fi-x-reuse" });
-  assert.equal(relatives, 3);
+  assert.equal(relatives, 6);
   const pluralOptions: PluralSelectOptions = { type: "ordinal", minimumFractionDigits: 0 };
   selectPlural(1, "en-x-reuse", pluralOptions);
   selectPlural(2, "EN_x_reuse", { minimumFractionDigits: 0, type: "ordinal" });
-  assert.equal(plurals, 1);
+  assert.equal(plurals, 3);
   pluralOptions.type = "cardinal";
   selectPlural(1, "en-x-reuse", pluralOptions);
   selectPlural(1, "fi-x-reuse", pluralOptions);
   selectPlural(1, "en-x-reuse", { ...pluralOptions, language: "fi-x-reuse" });
-  assert.equal(plurals, 3);
+  assert.equal(plurals, 6);
+});
+
+test("native option proxies cannot poison default caches or hide reads, coercions and errors", () => {
+  for (const warmFirst of [false, true]) {
+    const language = warmFirst ? "en-x-proxy-warm" : "en-x-proxy-cold";
+    const events: TranslatorLogEntry[] = [];
+    const translator = new Translator({
+      language,
+      logger: entry => {
+        events.push(entry);
+        throw new Error("Logger failure");
+      },
+    });
+    let numeric: "auto" | "always" = "auto";
+    let type: "ordinal" | "cardinal" = "ordinal";
+    const relative = new Proxy<RelativeTimeFormatOptions>(
+      {},
+      {
+        get: (target, key) => (key === "numeric" ? numeric : Reflect.get(target, key)),
+      },
+    );
+    const plural = new Proxy<PluralSelectOptions>(
+      {},
+      {
+        get: (target, key) => (key === "type" ? type : Reflect.get(target, key)),
+      },
+    );
+    const defaults = () => {
+      assert.equal(
+        translator.formatRelativeTime(0, "day"),
+        new Intl.RelativeTimeFormat(language).format(0, "day"),
+      );
+      assert.deepEqual(
+        formatRelativeTimeToParts(0, "day", language, {}),
+        new Intl.RelativeTimeFormat(language).formatToParts(0, "day"),
+      );
+      assert.equal(selectPlural(2, language), new Intl.PluralRules(language).select(2));
+      assert.equal(translator.selectPlural(2, {}), new Intl.PluralRules(language).select(2));
+    };
+    if (warmFirst) defaults();
+    for (const mode of ["auto", "always", "auto"] as const) {
+      numeric = mode;
+      const native = new Intl.RelativeTimeFormat(language, { numeric });
+      assert.equal(formatRelativeTime(0, "day", language, relative), native.format(0, "day"));
+      assert.equal(translator.formatRelativeTime(0, "day", relative), native.format(0, "day"));
+      assert.deepEqual(
+        formatRelativeTimeToParts(0, "day", language, relative),
+        native.formatToParts(0, "day"),
+      );
+      assert.deepEqual(
+        translator.formatRelativeTimeToParts(0, "day", relative),
+        native.formatToParts(0, "day"),
+      );
+      type = mode === "always" ? "cardinal" : "ordinal";
+      assert.equal(
+        selectPlural(2, language, plural),
+        new Intl.PluralRules(language, { type }).select(2),
+      );
+      assert.equal(
+        translator.selectPlural(2, plural),
+        new Intl.PluralRules(language, { type }).select(2),
+      );
+      defaults();
+    }
+    const error = new Error("Native option getter failure");
+    for (const key of ["numeric", "type"] as const) {
+      const throwing = new Proxy(
+        {},
+        {
+          get(target, property) {
+            if (property === key) throw error;
+            return Reflect.get(target, property);
+          },
+        },
+      );
+      for (const call of key === "numeric"
+        ? [
+            () => translator.formatRelativeTime(0, "day", throwing),
+            () => translator.formatRelativeTimeToParts(0, "day", throwing),
+          ]
+        : [() => translator.selectPlural(2, throwing)]) {
+        assert.throws(call, thrown => thrown === error);
+      }
+    }
+    assert.deepEqual(
+      events.map(entry => [entry.event, entry.error]),
+      [
+        ["relative-time-format-failed", error],
+        ["relative-time-format-to-parts-failed", error],
+        ["plural-select-failed", error],
+      ],
+    );
+  }
+  const options: RelativeTimeFormatOptions = {
+    style: {
+      toString() {
+        options.numeric = "auto";
+        return "long";
+      },
+    } as unknown as "long",
+    numeric: "always",
+  };
+  assert.equal(formatRelativeTime(0, "day", "en", options), "today");
 });
 
 test("new Intl caches bypass observable coercion and oversized keys and evict old entries", t => {
@@ -3344,6 +3544,49 @@ test("clock options reject fabricated date and zone fields at compile time and r
   const clockOptions: TimeFormatOptions = dateOptions;
   assert.throws(() => formatTime("09:05", "en-GB", clockOptions), /year/);
   assert.throws(() => formatTime("09:05", "en-GB", Object.create({ weekday: "long" })), /weekday/);
+});
+
+test("clock style coercion cannot expose synthetic zones and runs only once per call", () => {
+  const translator = new Translator({ language: "en" });
+  const calls = [
+    (o: TimeFormatOptions) => formatTime("09:00", "en", o),
+    (o: TimeFormatOptions) => formatTimeToParts("09:00", "en", o),
+    (o: TimeFormatOptions) => formatTimeRange("09:00", "17:00", "en", o),
+    (o: TimeFormatOptions) => formatTimeRangeToParts("09:00", "17:00", "en", o),
+    (o: TimeFormatOptions) => translator.formatTime("09:00", o),
+    (o: TimeFormatOptions) => translator.formatTimeToParts("09:00", o),
+    (o: TimeFormatOptions) => translator.formatTimeRange("09:00", "17:00", o),
+    (o: TimeFormatOptions) => translator.formatTimeRangeToParts("09:00", "17:00", o),
+  ];
+  for (const call of calls) {
+    for (const style of ["short", "medium", "long", "full"] as const) {
+      let coercions = 0;
+      const options: TimeFormatOptions = {
+        timeStyle: {
+          toString() {
+            coercions++;
+            return style;
+          },
+        } as unknown as "short",
+      };
+      if (style === "long" || style === "full") {
+        assert.throws(() => call(options), /supports only short or medium timeStyle/);
+      } else assert.deepEqual(call(options), call({ timeStyle: style }));
+      assert.equal(coercions, 1);
+    }
+    const error = new Error("Style coercion failure");
+    assert.throws(
+      () =>
+        call({
+          timeStyle: {
+            toString() {
+              throw error;
+            },
+          } as unknown as "short",
+        }),
+      thrown => thrown === error,
+    );
+  }
 });
 
 test("clock formatting preserves allowed time fields without emitting date or zone labels", () => {

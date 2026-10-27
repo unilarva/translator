@@ -2,28 +2,26 @@
 
 ## Unreleased
 
-- **Breaking:** Restrict all four `formatDate*` APIs to calendar strings/records and date-only options;
-  Date inputs and clock/zone options are rejected. Move instants to the four `formatDateTime*` APIs
-  with required explicit `timeZone` options. Defaults are medium date plus short time unless styles
-  or display components are defined. Weekdays also reject zone options. See the usage guide's
-  temporal migration; no mixed-input compatibility overloads are retained.
-- Add native structured parts for numbers, currencies, relative times, calendars, datetimes, clocks,
-  and weekdays, plus number/currency/calendar/datetime/clock/weekday ranges, through helpers and
-  Translator methods. Parts are fresh and caller-owned with native range source metadata. Clock
-  ranges use same-day ordering and pair-aware seconds; recurring contiguous weekday spans wrap
-  forward through Sunday, with equal endpoints meaning one weekday. Unsupported native operations
-  fail only when called, without affecting imports or unrelated formatting.
-- Extend opt-in `intlDomExtension()` with text-only number, currency, calendar, clock, weekday and
-  datetime range pairs and temporal styles, all supporting custom prefixes. Datetime pairs privately
-  parse strict offset-bearing timestamps, require an explicit output zone and always supply both
-  date/time styles (independent medium/short defaults, unlike core projections). Invalid markers and
-  options preserve old content and valid siblings; native strings and binding refreshes are retained.
-  No public parser, single-datetime marker or parts rendering is added.
-- Require TypeScript `ES2023` libraries, or `ES2022` plus `ES2023.Intl`, instead of ES2022 alone.
-  Root declarations remain DOM-free; the JavaScript target stays ES2022 and the Node minimum stays
-  `22.13.0`.
+- **Breaking:** Make all four `formatDate*` APIs calendar-only, rejecting Date instants and clock/zone
+  options. Move instants to `formatDateTime*` with a required explicit `timeZone` and medium-date/
+  short-time defaults unless styles or display components are defined. Weekdays also reject zone
+  options. TypeScript now requires `ES2023` libraries or `ES2022` plus `ES2023.Intl`; the DOM-free root,
+  ES2022 JavaScript target and Node `22.13.0` minimum are unchanged. See the usage guide's temporal migration.
+- Add native structured parts for every formatting family and string/parts ranges for numbers,
+  currencies, calendars, datetimes, clocks and weekdays, through helpers and Translator methods.
+  Preserve caller-owned parts, native source metadata and operation-specific capability errors.
+  Clock ranges use same-day ordering and pair-aware seconds; weekday spans wrap forward through
+  Sunday, with equality meaning one weekday. Harden calendar/clock getter and style validation,
+  using single-read clock fields without exposing synthetic dates/zones.
+- Extend opt-in `intlDomExtension()` with text-only ranges and temporal styles, including custom
+  prefixes. Datetime pairs privately parse strict offset-bearing timestamps, require an explicit
+  output zone and independently default to medium date plus short time. Preserve native strings,
+  binding refreshes, old content on invalid input and valid siblings. No public parser, single-datetime
+  marker or parts/HTML rendering is added.
+- Fix Proxy-backed relative-time/plural options hiding native reads or errors: only package-owned
+  defaults are cached; supplied options retain native getter/coercion behavior.
 
-## 0.3.0 - 2026-10-05
+## 0.4.0 - 2026-10-05
 
 - Add ordered multiple fallback languages through `TranslatorOptions.additionalFallbackLanguages`
   (default `[]`), `setAdditionalFallbackLanguages()`, `getAdditionalFallbackLanguages()`, and

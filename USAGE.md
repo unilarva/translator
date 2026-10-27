@@ -872,11 +872,11 @@ Contracts are intentionally narrow:
   `dayPeriod`, `hour12`, `hourCycle`, `timeZone`, and `timeZoneName`. Forbidden properties are rejected
   even if inherited, non-enumerable, or explicitly `undefined`; they are not silently ignored.
 - Time strings use `HH:MM` or `HH:MM:SS` and are formatted as clock times without local time-zone
-  shifts.
+  shifts. Clock records read each field once per endpoint, then validate and anchor those same values.
 - Clock-time options cannot request date components or a time-zone label; no synthetic date or zone
   is exposed in the formatted result.
 - Clock `timeStyle` accepts only `short` or `medium`; `long` and `full` implicitly include a zone and
-  are rejected.
+  are rejected, including when produced by native option coercion.
 - Supplying seconds, including `:00`, preserves seconds in the default formatted output.
 - Weekdays are integers from Monday `0` through Sunday `6`. `WeekdayFormatOptions` explicitly forbids
   `timeZone` and `timeZoneName`, including inherited or explicitly `undefined` properties.
@@ -1454,11 +1454,14 @@ methods log the original error through `relative-time-format-failed` or `plural-
 respectively, then rethrow that same error. Standalone helpers throw without translator logging.
 
 Locale support and exact results depend on the host's `Intl` implementation and locale data, not on
-the translation catalog or its fallback policy. Each formatter family uses a bounded cache under
-the existing shared cache policy; object-valued option coercions bypass caching so their observable
-behavior is preserved. Relative-time and plural helpers also bypass caching for accessor properties
-and custom option prototypes, preserving native reads of inherited and non-enumerable options without invoking unknown
-option getters. These helpers remain DOM-free and add no runtime dependencies or DOM markers.
+the translation catalog or its fallback policy. Relative-time strings/parts and plural helpers cache
+only calls with omitted/undefined options, using package-owned defaults and bounded per-family caches.
+Every supplied options object, including `{}`, bypasses those caches: a Proxy can report ordinary
+data-property descriptors while returning different values or throwing on native reads. Passing the
+original object to Intl preserves native getter/coercion order, inherited/non-enumerable options and
+unknown-option non-reading, rather than eagerly snapshotting fields. Other formatter families retain
+their documented snapshot/cache policies. These helpers remain DOM-free and add no runtime
+dependencies or DOM markers.
 
 ## Logging
 

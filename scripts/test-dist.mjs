@@ -687,6 +687,119 @@ function assertDateTimeContract(api, translator) {
 
 assertDateTimeContract(core, translator);
 
+/** Keeps accessor snapshots and native Proxy-option isolation gated in the actual tarball. */
+function assertOptionIsolation(api) {
+  for (const warmFirst of [false, true]) {
+    const language = warmFirst ? "en-x-dist-warm" : "en-x-dist-cold";
+    const events = [];
+    const translator = new api.Translator({ language, logger: entry => events.push(entry) });
+    let numeric = "auto",
+      type = "ordinal";
+    const relative = new Proxy({}, { get: (_, key) => (key === "numeric" ? numeric : undefined) });
+    const plural = new Proxy({}, { get: (_, key) => (key === "type" ? type : undefined) });
+    const defaults = () => {
+      assert.equal(
+        translator.formatRelativeTime(0, "day"),
+        new Intl.RelativeTimeFormat(language).format(0, "day"),
+      );
+      assert.equal(translator.selectPlural(2), new Intl.PluralRules(language).select(2));
+    };
+    if (warmFirst) defaults();
+    for (const mode of ["auto", "always", "auto"]) {
+      numeric = mode;
+      type = mode === "auto" ? "ordinal" : "cardinal";
+      const native = new Intl.RelativeTimeFormat(language, { numeric });
+      assert.deepEqual(
+        api.formatRelativeTimeToParts(0, "day", language, relative),
+        native.formatToParts(0, "day"),
+      );
+      assert.deepEqual(
+        translator.formatRelativeTimeToParts(0, "day", relative),
+        native.formatToParts(0, "day"),
+      );
+      assert.equal(api.formatRelativeTime(0, "day", language, relative), native.format(0, "day"));
+      assert.equal(
+        translator.selectPlural(2, plural),
+        new Intl.PluralRules(language, { type }).select(2),
+      );
+      defaults();
+    }
+    const error = new Error("Proxy getter failure");
+    const throwing = new Proxy(
+      {},
+      {
+        get(_, key) {
+          if (key === "numeric" || key === "type") throw error;
+        },
+      },
+    );
+    assert.throws(
+      () => translator.formatRelativeTimeToParts(0, "day", throwing),
+      thrown => thrown === error,
+    );
+    assert.throws(
+      () => translator.selectPlural(2, throwing),
+      thrown => thrown === error,
+    );
+    assert.deepEqual(
+      events.map(entry => [entry.event, entry.error]),
+      [
+        ["relative-time-format-to-parts-failed", error],
+        ["plural-select-failed", error],
+      ],
+    );
+  }
+  for (const [family, field, start, end] of [
+    ["Date", "hour", "2026-01-01", "2026-01-02"],
+    ["Time", "year", "09:00", "17:00"],
+  ])
+    for (const suffix of ["", "ToParts", "Range", "RangeToParts"]) {
+      const name = `format${family}${suffix}`;
+      for (const facade of [false, true]) {
+        const translator = new api.Translator({ language: "en" });
+        const options = {
+          get language() {
+            Object.defineProperty(options, field, { value: undefined, enumerable: true });
+            return "en";
+          },
+        };
+        const args = suffix.startsWith("Range") ? [start, end] : [start];
+        assert.throws(
+          () => (facade ? translator[name](...args, options) : api[name](...args, "en", options)),
+          new RegExp(`does not support ${field}`),
+        );
+      }
+    }
+  let reads = 0;
+  const clock = {
+    get hour() {
+      return ++reads === 1 ? 9 : 25;
+    },
+    minute: 5,
+  };
+  assert.equal(api.formatTime(clock, "en"), api.formatTime("09:05", "en"));
+  assert.equal(reads, 1);
+  for (const suffix of ["", "ToParts", "Range", "RangeToParts"]) {
+    const args = suffix.startsWith("Range") ? ["09:00", "17:00"] : ["09:00"];
+    let coercions = 0;
+    const options = {
+      timeStyle: {
+        toString() {
+          coercions++;
+          return "long";
+        },
+      },
+    };
+    assert.throws(
+      () => api[`formatTime${suffix}`](...args, "en", options),
+      /supports only short or medium timeStyle/,
+    );
+    assert.equal(coercions, 1);
+  }
+}
+
+assertOptionIsolation(core);
+
 /** Exercises the same public DOM contract against built and clean-installed modules. */
 function assertDomRanges(api, dom, Window) {
   assert.equal("intlDomExtension" in api, false);
@@ -1416,7 +1529,8 @@ try {
        (${assertParts.toString()})(core, translator);
         (${assertNumberRanges.toString()})(core, translator);
           (${assertDateTimeRanges.toString()})(core, translator);
-          (${assertDateTimeContract.toString()})(core, translator);
+           (${assertDateTimeContract.toString()})(core, translator);
+           (${assertOptionIsolation.toString()})(core);
           (${assertWeekdayRanges.toString()})(core, translator);
           (${assertDomRanges.toString()})(core, dom, Window);
           (${assertDatetimeDomRanges.toString()})(core, dom, Window);

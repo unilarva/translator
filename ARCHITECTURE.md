@@ -147,12 +147,13 @@ coercion, throwing `RangeError` otherwise. Preserve native unit and option valid
 including singular/plural relative-time units, long/numeric-always defaults, cardinal plural rules,
 and digit/rounding effects on categories. Return `Intl.LDMLPluralRule` labels rather than messages.
 
-Keep a separate bounded cache for each Intl family using the existing shared cache policy and
-canonical locale/effective primitive option keys. Object-valued option coercions bypass caching;
-the relative-time and plural helpers inspect data-property descriptors for cache keys and pass original
-options to Intl.
-Accessors and custom prototypes bypass caching to retain native option reads without invoking unknown
-getters. Cache reuse must not hide observable coercion. Host locale negotiation and data determine support,
+Keep separate bounded caches for relative-time and plural defaults, keyed by canonical locale. Only
+a package-owned frozen null-prototype default-options sentinel may reuse these caches. All supplied
+options bypass caching and pass unchanged to Intl after the language override read. Descriptors and
+prototype checks cannot prove that an object is not a Proxy; do not reuse them as cache safety tests.
+Eager field snapshots would also change native interleaved getters/coercions. Preserve inherited and
+non-enumerable option reads and ignore unknown option getters. Cache reuse must not hide observable
+coercion or failures. Host locale negotiation and data determine support,
 not catalog fallback. Do not add automatic unit selection, date differences, clocks, timers, plural
 message compilation, runtime dependencies, or DOM markers for these helpers. Consumers selecting
 message keys from categories must align the rule language with the resolved message language;
@@ -177,6 +178,8 @@ forbids `timeStyle`, `hour`, `minute`, `second`, `fractionalSecondDigits`, `dayP
 inherited/non-enumerable and explicitly undefined fields. Weekday options likewise explicitly forbid
 `timeZone` and `timeZoneName`. Types model prohibitions, but cannot promise rejection of undefined
 under every consumer's optional-property settings. Never expose calendar synthetic midnight.
+Calendar/clock restrictions are checked before reading options and again on their detached snapshots,
+so getters cannot inject forbidden display fields after the initial check.
 
 The four datetime helpers and matching methods require DateTimeFormatOptions with `timeZone: string`.
 Validate genuine native Date slots (including cross-realm Dates), ignore overridden getTime/valueOf
@@ -198,7 +201,9 @@ projections of explicitly zoned instants, not package-added calendar/clock coerc
 
 Keep clock seconds-presence defaults (including explicit zero), existing forbidden fields even when
 inherited/undefined, short/medium styles only, and Monday `0` through Sunday `6` with default long
-weekday width. Clock parts must never expose synthetic dates/zones. Compare each native operation
+weekday width. Read each clock-record field once, validating and anchoring that same snapshot.
+Reject long/full clock styles after native coercion as well as by literal value, so an object-valued
+style cannot expose the synthetic zone. Clock parts must never expose synthetic dates/zones. Compare each native operation
 independently: DateTimeFormat string and parts literals can differ in whitespace.
 
 `formatNumberRange()`, `formatNumberRangeToParts()`, `formatCurrencyRange()`, and
@@ -707,7 +712,7 @@ Final local qualification on **2026-10-27** covers the Unreleased temporal split
 range families. It is not a publication record or proof of consumer adoption.
 
 - Complete `npm run validate` passed on verified Node **22.13.0** and **24.22.1**, each with npm
-  **11.15.0** selected for nested commands: formatting, source/test types, **236 tests, no skips**,
+  **11.15.0** selected for nested commands: formatting, source/test types, **240 tests, no skips**,
   clean ESM/declaration build, built runtime, exact-tarball clean install/runtime and strict consumers.
 - Root source/built/installed declarations compile with `types: []` under both `ES2023` and
   `ES2022` plus `ES2023.Intl`, without DOM/Node ambient types or shims; `/dom` consumers use DOM
@@ -718,17 +723,25 @@ range families. It is not a publication record or proof of consumer adoption.
   calendar/clock prohibitions, weekday wrap/equality and strict DOM grammar/styles/zones/lifecycle.
   Built/installed datetime DOM output also matches across UTC, Los Angeles and Tokyo host zones.
 
+The release-readiness audit of `7848d1e` through `74253a6` also closed inherited Proxy cache poisoning
+in relative-time/plural helpers, getter-added forbidden calendar/clock fields, repeated clock-field
+reads and coerced long/full clock styles that could reveal the synthetic zone. Four source regressions
+and built/clean-installed fixtures gate these corrections; default-only native-option caching preserves
+native read/coercion ordering. The prior release's changelog heading was corrected to `0.4.0`, matching
+its tag and registry version. No new version or publication is implied by this audit.
+
 Representative desktop browser smoke passed on **Chromium 149.0.7827.55**, **Firefox 151.0**, and
 **WebKit 26.5**, sequentially in Playwright **1.61.1**'s Noble Docker image with network disabled,
 read-only inputs, in-memory bundles and no capture/download artifacts:
 
-| Selection                                                                           | Per Engine                      | Entry Under Test                          |
-| ----------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------- |
-| Field DOM strings/options, invalid isolation, refreshes/disposal and DOM boundaries | 3,884 cases / 19,312 assertions | Public source root and `/dom`             |
-| Datetime DOM grammar/offsets/leaps/year/DST, styles/zones, isolation and lifecycle  | 1,576 cases / 8,304 assertions  | Public source root and `/dom`             |
-| Weekday native/public string/parts oracle                                           | 1,617 cases per host zone       | Built root bundled for browser            |
-| Datetime four-operation native oracle                                               | 240 cases per host zone         | Built root bundled for browser            |
-| Independent method removal before import and on warm caches                         | 14 scenarios / 636 assertions   | Built root and `/dom` bundled for browser |
+| Selection                                                                            | Per Engine                      | Entry Under Test                          |
+| ------------------------------------------------------------------------------------ | ------------------------------- | ----------------------------------------- |
+| Field DOM strings/options, invalid isolation, refreshes/disposal and DOM boundaries  | 3,884 cases / 19,312 assertions | Public source root and `/dom`             |
+| Datetime DOM grammar/offsets/leaps/year/DST, styles/zones, isolation and lifecycle   | 1,576 cases / 8,304 assertions  | Public source root and `/dom`             |
+| Weekday native/public string/parts oracle                                            | 1,617 cases per host zone       | Built root bundled for browser            |
+| Datetime four-operation native oracle                                                | 240 cases per host zone         | Built root bundled for browser            |
+| Independent method removal before import and on warm caches                          | 14 scenarios / 636 assertions   | Built root and `/dom` bundled for browser |
+| Release-audit Proxy/default isolation, getter injection, clock fields/style coercion | 186 assertions                  | Built root bundled for browser            |
 
 Both DOM matrices and the built temporal oracles ran in Los Angeles and Tokyo emulated host zones,
 with identical outputs for identical explicit zones/field inputs and zero failures/page errors.
@@ -746,6 +759,8 @@ mobile presets/physical devices or exhaustive locale/ICU/tzdata coverage. Node t
 Happy DOM checks do not fill those gaps. These browser probes are manual qualification, not a package
 browser CI gate. Future qualification must separately identify its tested entry, engine and host data;
 do not infer support from declarations or sanitize native weekday output to hide leakage.
+Strict consumer fixtures currently use the locked TypeScript compiler and NodeNext resolution;
+they do not establish a compiler-version or installed-consumer Bundler-resolution matrix.
 
 ## Development
 

@@ -38,12 +38,16 @@ This document is for package maintainers. Consumer setup and behavior belong in
 - [Development](#development)
 - [Adding Or Changing Features](#adding-or-changing-features)
 - [Future Enhancements](#future-enhancements)
+  - [Intl Formatting Parts](#intl-formatting-parts)
+  - [Intl Formatting Ranges](#intl-formatting-ranges)
   - [Inserted Markup Observation](#inserted-markup-observation)
-  - [Intl Formatting Parts And Ranges](#intl-formatting-parts-and-ranges)
-  - [Catalog Generation And Extraction](#catalog-generation-and-extraction)
-  - [Framework Adapters](#framework-adapters)
-  - [Plural, Select, And Compiled Messages](#plural-select-and-compiled-messages)
-  - [Rich Grammar And Asynchronous Rendering](#rich-grammar-and-asynchronous-rendering)
+  - [JSON-To-Key Declaration Generation](#json-to-key-declaration-generation)
+  - [Stable Reactive Snapshots](#stable-reactive-snapshots)
+  - [One Framework Adapter](#one-framework-adapter)
+  - [Compiled Plural And Select Messages](#compiled-plural-and-select-messages)
+  - [Source Key Extraction](#source-key-extraction)
+  - [Broader Rich-Text Grammar](#broader-rich-text-grammar)
+  - [Asynchronous Rendering](#asynchronous-rendering)
 - [Distribution And Release](#distribution-and-release)
   - [CI And Trusted Publishing](#ci-and-trusted-publishing)
 - [Documentation Ownership](#documentation-ownership)
@@ -541,67 +545,118 @@ updates.
 
 ## Future Enhancements
 
-These are unimplemented candidates, not release commitments. Prefer additive, opt-in APIs that leave
-existing consumers unchanged. Gate tooling, adapters, and compiled messages on a
-concrete consumer need rather than adding speculative infrastructure.
+These are unimplemented candidates, not release commitments. The order below is the proposed default
+implementation order, balancing general usefulness, scope, and risk; it is not a dependency chain.
+Concrete consumer needs should override it, particularly for compiled plural/select messages, whose
+i18n value can exceed optional DOM conveniences. Gate tooling, reactive infrastructure, adapters, and
+rendering extensions on demonstrated requirements rather than implementing every item in sequence.
 
-| Candidate                                  | Importance                                | Complexity  |
-| ------------------------------------------ | ----------------------------------------- | ----------- |
-| Inserted markup observation                | Medium; high for dynamic imperative DOM   | Medium-high |
-| Intl parts and ranges                      | Medium; low-risk native extension         | Low-medium  |
-| JSON-to-key declaration generator          | Medium for TypeScript workflows           | Medium      |
-| Stable snapshots and one framework adapter | High when an integration needs it         | Medium-high |
-| Thin compiled-message integration          | High i18n value; format decision required | High        |
-| Rich grammar and asynchronous rendering    | Use-case dependent                        | High        |
+Prefer additive, opt-in APIs that leave existing consumers unchanged. Adding a public contract does
+not inherently require breaking an existing one: use separate methods, options, tooling, or entry
+points rather than changing current return types, event semantics, grammar, or callback timing.
+
+| Order | Candidate                           | Importance / implementation gate                  | Complexity  | Public contract addition                  |
+| ----- | ----------------------------------- | ------------------------------------------------- | ----------- | ----------------------------------------- |
+| 1     | Intl formatting parts               | Broadly useful, natural native extension          | Low-medium  | Helpers, methods, and parts types         |
+| 2     | Intl formatting ranges              | Natural follow-up; can ship separately            | Medium      | Range inputs, results, runtime support    |
+| 3     | Inserted markup observation         | High for dynamic imperative DOM when needed       | Medium-high | Opt-in scheduling and binding lifecycle   |
+| 4     | JSON-to-key declaration generation  | When external JSON makes typed keys inconvenient  | Medium      | Separate tooling inputs and output        |
+| 5     | Stable reactive snapshots           | Design from a concrete framework/SSR integration  | Medium-high | Stable identity and comprehensive events  |
+| 6     | One framework adapter               | When a target framework integration is required   | Medium      | Adapter lifecycle and SSR/hydration       |
+| 7     | Compiled plural and select messages | High i18n value; promote when messages require it | High        | Separate evaluation and compiled catalogs |
+| 8     | Source key extraction               | Separate tooling project with defined languages   | High        | Source syntax and dynamic-key policy      |
+| 9     | Broader rich-text grammar           | Only with a concrete grammar requirement          | High        | Opt-in grammar and node/renderer types    |
+| 10    | Asynchronous rendering              | Only when synchronous rendering is insufficient   | High        | Separate async lifecycle and completion   |
+
+### Intl Formatting Parts
+
+Add named helpers and matching Translator methods that expose native structured parts for
+consumer-controlled rendering without parsing formatted strings. Keep existing methods string-returning.
+Specify parts types, ownership, and supported formatter families. Preserve calendar/clock/instant
+distinctions, locale-data dependence, and bounded-cache/coercion behavior; clock parts must never expose
+their synthetic date or zone. Keep the root DOM-free; any newer TypeScript library baseline must be
+documented and verified with isolated consumer declarations. Parts are not HTML: consumers still own
+safe rendering. Add DOM markers only when a consumer needs them.
+
+### Intl Formatting Ranges
+
+Implement separately from single-value parts, with named string and parts helpers and matching
+Translator methods for the native formatter families that support ranges. Define endpoint validation,
+calendar-versus-instant compatibility, clock ordering, range-part source metadata, and native
+range/runtime availability. Preserve existing single-value defaults, finite-number constraints,
+calendar/clock/instant distinctions, and cache/coercion behavior. Do not manufacture localized ranges
+by joining two formatted strings. A newer TypeScript Intl library baseline is acceptable, but is a
+consumer-contract change: update requirements and isolated declaration tests together rather than
+silently requiring newer libraries. Unsupported hosts need a clear call-time error, not an import-time
+failure or an implicit polyfill.
 
 ### Inserted Markup Observation
 
 Start with a disabled-by-default observer for inserted element subtrees, not marker edits or general
 selector dependency tracking. Batch nested additions, ignore removed nodes, use the owning realm,
 and retain template/shadow-root boundaries. Suppress rendering feedback loops, diagnose observer-scan
-failures, and disconnect on disposal or failed initialization. Renderer-created markup during
+failures, and disconnect on disposal or failed initialization. Define asynchronous scan scheduling
+and error reporting without changing synchronous explicit updates. Renderer-created markup during
 suppression still needs explicit updates. Verify scheduling and feedback prevention in real browsers;
 do not conflate insertion observation with catalog or lookup-policy changes.
 
-### Intl Formatting Parts And Ranges
-
-Add named helpers and matching Translator methods without changing existing signatures. Specify parts
-return types and native range/runtime availability. Preserve calendar/clock/instant distinctions,
-locale-data dependence, and bounded-cache/coercion behavior; clock results must never expose their
-synthetic date or zone. Add DOM markers only when a consumer needs them.
-
-### Catalog Generation And Extraction
+### JSON-To-Key Declaration Generation
 
 Begin, if needed, with deterministic key-declaration generation from JSON bundles in separate tooling.
 Preserve dynamic string keys and runtime validation; generated vocabulary does not prove downloaded
-catalog validity or locale coverage. Source extraction is a different project: choose source languages,
-AST tooling, and dynamic-key policy first. Its scope and complexity depend on those requirements.
+catalog validity or locale coverage. Specify accepted bundle inputs, key selection across files,
+output, and errors. This needs a tooling contract, not a core runtime API change or source extraction.
 
-### Framework Adapters
+### Stable Reactive Snapshots
 
-Select one framework and SSR use case before execution. Add a lightweight stable snapshot and a new
+Select a target framework and SSR use case before designing a lightweight stable snapshot and a new
 subscription covering locale, catalog, registry, and lookup-policy revisions; do not clone catalogs
-on every read or change existing getter ownership/event semantics. Define no-op identity, reentrancy,
-and coherent transaction notifications, then build a separate adapter. Keep framework dependencies
-outside core and translators request-owned during SSR; test hydration and disposal explicitly.
+on every read or change existing getter ownership/event semantics. Existing subscriptions alone are
+insufficient because fallback-policy setters intentionally emit none of those events. Define no-op
+identity, reentrancy, and coherent transaction notifications. This is a new observation contract, not
+a reason to turn detached getters into live objects or add policy events to existing channels.
 
-### Plural, Select, And Compiled Messages
+### One Framework Adapter
+
+Use the stable snapshot contract to build one separately scoped adapter for the selected framework,
+not a universal framework abstraction. Keep framework dependencies outside core and translators
+request-owned during SSR. Define subscription cleanup and server/client snapshot behavior; test
+hydration and disposal explicitly. Adapter lifecycle is a separate public contract from core state
+observation, even when the two are developed together.
+
+### Compiled Plural And Select Messages
 
 Choose a concrete message format/compiler before adding a separate opt-in API or compiled catalog.
 Preserve ordinary `{name}` interpolation and string bundle values; compiled callbacks are trusted
 consumer code, not JSON. Plural rules must use the resolved message's locale, including fallback,
 not blindly the active locale. Define escaping, nested branches, missing variables, and failure
 isolation. Keep compilation dependencies outside core. Prefer a thin external-compiler integration;
-a bespoke nested parser/compiler brings substantially greater security and maintenance cost.
+a bespoke nested parser/compiler brings substantially greater security and maintenance cost. A
+separate evaluation API can preserve existing imports and lookups; replacing string bundle values
+or ordinary interpolation would instead require a documented compatibility change.
 
-### Rich Grammar And Asynchronous Rendering
+### Source Key Extraction
 
-Broader token grammar or asynchronous rendering should use separate opt-in APIs. Keep ordinary rich
-tokens attribute-free, URLs consumer-owned, and current extension callbacks synchronous and
-unawaited. An asynchronous API would need explicit ordering, cancellation, stale-result, and disposal
-semantics. Define the scope from a concrete use case. Replacing the current grammar,
-node variants, or callback contract would require a documented compatibility change; do not bundle
-this work into message compilation or insertion observation.
+Treat extraction as a separate tooling project, not an extension of JSON-to-key declaration
+generation. Choose supported source languages and templates, AST tooling, key-discovery rules, and
+dynamic-key policy first. Scope and maintenance cost depend on those choices. Do not add extraction
+dependencies or assumptions to the runtime translator.
+
+### Broader Rich-Text Grammar
+
+Use a separate opt-in parser/API or explicit grammar mode for a concrete requirement. Keep ordinary
+rich tokens attribute-free and URLs consumer-owned. The current exported node union is also used by
+SSR consumers: adding variants can break exhaustive consumer renderers even if function signatures
+remain unchanged. Reinterpreting currently literal syntax or replacing current nodes requires a
+documented compatibility change; prefer a separate node contract when the representation must grow.
+
+### Asynchronous Rendering
+
+Keep current extensions and rich-text callbacks synchronous and unawaited. They explicitly reject or
+diagnose asynchronous results today; widening their return types to accept promises is not enough.
+A separate opt-in API needs completion, ordering, cancellation, stale-result, error, and disposal
+semantics. Preserve synchronous fallback and failure isolation for existing consumers. Do not bundle
+this work with richer grammar, message compilation, or insertion observation.
 
 ## Distribution And Release
 
